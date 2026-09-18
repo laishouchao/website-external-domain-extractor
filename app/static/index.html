@@ -1810,7 +1810,7 @@
                         </select>
                     </div>
 
-                    <div class="flex items-center gap-2 shrink-0">
+                    <div class="flex items-center gap-2 shrink-0 flex-wrap">
                         <button @click="showAddProfileForm = !showAddProfileForm; showBatchImportProfilesForm = false"
                                 class="px-3 py-1.5 bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 rounded-lg transition font-medium flex items-center gap-1.5">
                             <span>+ 新增风险域名/根域</span>
@@ -1826,6 +1826,24 @@
                             <span v-else>⚡</span>
                             <span>{{ isSyncingHistory ? '正在追溯全库...' : '同步全库历史记录' }}</span>
                         </button>
+                        <a :href="`/api/risk-profiles/export/csv?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`"
+                           download
+                           class="px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/30 rounded-lg transition font-medium flex items-center gap-1"
+                           title="导出当前情报规则为 CSV 表格">
+                            📊 导出 CSV
+                        </a>
+                        <a :href="`/api/risk-profiles/export/json?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`"
+                           download
+                           class="px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 rounded-lg transition font-medium flex items-center gap-1"
+                           title="导出当前情报规则为 JSON 备份数据">
+                            📦 导出 JSON
+                        </a>
+                        <a :href="`/api/risk-profiles/export/txt?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`"
+                           download
+                           class="px-2.5 py-1.5 bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/30 rounded-lg transition font-medium flex items-center gap-1"
+                           title="导出纯域名列表 TXT">
+                            📥 导出 TXT
+                        </a>
                     </div>
                 </div>
 
@@ -1978,6 +1996,10 @@
                 <div class="flex items-center justify-between border-t border-slate-800 pt-3 text-xs text-slate-400">
                     <div class="flex items-center gap-2">
                         <span>共 <strong class="text-white font-mono">{{ riskProfilesTotal }}</strong> 条情报规则</span>
+                        <span class="text-slate-600">|</span>
+                        <a :href="`/api/risk-profiles/export/csv?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`" download class="text-emerald-400 hover:underline">📊 导出 CSV</a>
+                        <span class="text-slate-600">|</span>
+                        <a :href="`/api/risk-profiles/export/json?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`" download class="text-indigo-400 hover:underline">📦 导出 JSON</a>
                         <span class="text-slate-600">|</span>
                         <span class="text-slate-500 hidden sm:inline">💡 根域模式自动匹配子域 (*.evil.com 匹配任意级别子域)</span>
                     </div>

@@ -1,5 +1,9 @@
+import io
+import csv
+import json
+from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from app.db import crud
 
@@ -44,6 +48,114 @@ def list_profiles_api(
         offset=offset
     )
     return {"profiles": profiles, "total": total}
+
+
+@router.get("/export/csv")
+def export_risk_profiles_csv(
+    search: Optional[str] = Query(None),
+    risk_level: Optional[str] = Query(None)
+):
+    """Export threat intelligence rules to CSV format."""
+    profiles, _ = crud.list_risk_profiles(
+        search=search,
+        risk_level=risk_level,
+        limit=100000,
+        offset=0
+    )
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "目标域名", "匹配模式", "风险等级", "风险分类", "风险标签", "来源", "研判说明/依据", "创建时间", "更新时间"])
+
+    risk_label_map = {
+        "critical": "严重(Critical)",
+        "high": "高危(High)",
+        "medium": "中危(Medium)",
+        "low": "低危(Low)",
+        "safe": "安全(Safe)",
+        "pending": "待研判(Pending)"
+    }
+    match_type_map = {
+        "root": "主根域名通配 (*.)",
+        "exact": "精确域名匹配"
+    }
+
+    for p in profiles:
+        raw_tags = p.get("tags") or []
+        tags_str = " / ".join(raw_tags) if isinstance(raw_tags, list) else str(raw_tags)
+        writer.writerow([
+            p["id"],
+            p["domain"],
+            match_type_map.get(p.get("match_type", "root"), p.get("match_type", "root")),
+            risk_label_map.get(p.get("risk_level", "high"), p.get("risk_level", "high")),
+            p.get("category", ""),
+            tags_str,
+            p.get("source", "manual"),
+            p.get("remark", ""),
+            p.get("created_at", ""),
+            p.get("updated_at", "")
+        ])
+
+    csv_content = "\ufeff" + output.getvalue()
+    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Response(
+        content=csv_content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="risk_intelligence_profiles_{date_str}.csv"'}
+    )
+
+
+@router.get("/export/json")
+def export_risk_profiles_json(
+    search: Optional[str] = Query(None),
+    risk_level: Optional[str] = Query(None)
+):
+    """Export threat intelligence rules to structured JSON format."""
+    profiles, _ = crud.list_risk_profiles(
+        search=search,
+        risk_level=risk_level,
+        limit=100000,
+        offset=0
+    )
+    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    data = {
+        "exported_at": datetime.now().isoformat(),
+        "total_rules": len(profiles),
+        "profiles": profiles
+    }
+    content = json.dumps(data, ensure_ascii=False, indent=2)
+    return Response(
+        content=content,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="risk_intelligence_profiles_{date_str}.json"'}
+    )
+
+
+@router.get("/export/txt")
+def export_risk_profiles_txt(
+    search: Optional[str] = Query(None),
+    risk_level: Optional[str] = Query(None)
+):
+    """Export threat intelligence domains as plain text (one per line)."""
+    profiles, _ = crud.list_risk_profiles(
+        search=search,
+        risk_level=risk_level,
+        limit=100000,
+        offset=0
+    )
+    lines = []
+    for p in profiles:
+        dom = p.get("domain", "")
+        if p.get("match_type") == "root":
+            dom = f"*.{dom}"
+        lines.append(dom)
+
+    txt_content = "\n".join(lines) + ("\n" if lines else "")
+    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Response(
+        content=txt_content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="risk_domains_{date_str}.txt"'}
+    )
 
 
 @router.post("")
