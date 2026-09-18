@@ -1787,14 +1787,18 @@ def batch_import_risk_profiles(items: List[dict], sync_to_history: bool = True) 
     with db_session() as conn:
         cursor = conn.cursor()
         for it in items:
-            dom = it.get("domain", "").lower().strip().lstrip("*.")
+            raw_dom = it.get("domain", "").lower().strip()
+            if not raw_dom:
+                continue
+            is_wildcard = raw_dom.startswith("*.")
+            dom = raw_dom.lstrip("*.")
             if not dom:
                 continue
-            match_type = it.get("match_type", "root")
-            risk_level = it.get("risk_level", "high")
-            category = it.get("category", "")
+            match_type = it.get("match_type") or ("root" if is_wildcard else "exact")
+            risk_level = it.get("risk_level", "high") or "high"
+            category = it.get("category", "") or ""
             tags = it.get("tags") or []
-            remark = it.get("remark", "")
+            remark = it.get("remark", "") or ""
             source = it.get("source", "import")
 
             cursor.execute("""

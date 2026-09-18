@@ -1511,10 +1511,21 @@ const app = createApp({
             }
         };
 
+        const handleProfileFileUpload = (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                batchImportProfilesText.value = event.target.result || '';
+            };
+            reader.readAsText(file);
+            e.target.value = '';
+        };
+
         const submitBatchImportProfiles = async () => {
             const raw = (batchImportProfilesText.value || '').trim();
             if (!raw) {
-                alert("请输入要导入的域名列表");
+                alert("请输入或选择要导入的情报规则内容");
                 return;
             }
             isImportingProfiles.value = true;
@@ -1524,20 +1535,58 @@ const app = createApp({
                 for (const line of lines) {
                     const l = line.trim();
                     if (!l || l.startsWith('#')) continue;
-                    const parts = l.split(/[,，\t]+/);
-                    const dom = parts[0].trim();
-                    const level = parts[1] ? parts[1].trim() : 'high';
-                    const category = parts[2] ? parts[2].trim() : '';
-                    const remark = parts[3] ? parts[3].trim() : '批量导入情报';
+                    const parts = l.split(/[,，\t]/).map(p => p.trim());
+                    const rawDom = parts[0] || '';
+                    if (!rawDom) continue;
+
+                    const isWildcard = rawDom.startsWith('*.');
+                    const matchType = isWildcard ? 'root' : 'exact';
+
+                    // 规范化风险级别
+                    let level = (parts[1] || 'high').toLowerCase();
+                    if (level.includes('严重') || level === 'critical') level = 'critical';
+                    else if (level.includes('高危') || level === 'high') level = 'high';
+                    else if (level.includes('中危') || level === 'medium') level = 'medium';
+                    else if (level.includes('低危') || level === 'low') level = 'low';
+                    else if (level.includes('安全') || level.includes('白名单') || level === 'safe') level = 'safe';
+                    else if (level.includes('待研判') || level === 'pending') level = 'pending';
+                    else level = 'high';
+
+                    const category = parts[2] || '';
+
+                    // 标签解析: 第4列(以/或;分隔)
+                    let tags = [];
+                    if (parts[3]) {
+                        tags = parts[3].split(/[\/；;、\s]+/).map(t => t.trim()).filter(Boolean);
+                    }
+                    if (tags.length === 0 && category) {
+                        tags = [category];
+                    }
+
+                    // 备注说明: 第5列及后续内容
+                    let remark = '';
+                    if (parts.length > 4) {
+                        remark = parts.slice(4).join('，').trim();
+                    } else if (parts[3] && tags.length === 0) {
+                        remark = parts[3];
+                    } else {
+                        remark = category ? `批量导入: ${category}` : '批量导入情报';
+                    }
+
                     items.push({
-                        domain: dom,
-                        match_type: 'root',
+                        domain: rawDom,
+                        match_type: matchType,
                         risk_level: level,
                         category: category,
-                        tags: category ? [category] : [],
+                        tags: tags,
                         remark: remark,
                         sync_to_history: true
                     });
+                }
+
+                if (items.length === 0) {
+                    alert("未识别到有效的规则内容，请检查格式后重试（每行一条: 域名,风险等级,分类,标签,备注）");
+                    return;
                 }
 
                 const res = await fetch('/api/risk-profiles/batch', {
@@ -1547,7 +1596,7 @@ const app = createApp({
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    alert(`导入成功！共导入 ${data.imported_count} 条风险根域名情报并完成历史回溯！`);
+                    alert(`导入成功！共导入 ${data.imported_count} 条风险情报规则并完成历史回溯！`);
                     batchImportProfilesText.value = '';
                     showBatchImportProfilesForm.value = false;
                     await loadRiskProfiles(1);
@@ -1557,7 +1606,8 @@ const app = createApp({
                     }
                     await loadGlobalDomainStats();
                 } else {
-                    alert("批量导入失败");
+                    const err = await res.text();
+                    alert("批量导入失败: " + err);
                 }
             } catch (e) {
                 alert("导入异常: " + e.message);
@@ -1726,6 +1776,7 @@ const app = createApp({
             loadRiskProfiles,
             submitAddProfile,
             deleteRiskProfile,
+            handleProfileFileUpload,
             submitBatchImportProfiles,
             syncAllProfilesToHistory,
             globalDomainsList,

@@ -50,112 +50,66 @@ def list_profiles_api(
     return {"profiles": profiles, "total": total}
 
 
-@router.get("/export/csv")
-def export_risk_profiles_csv(
-    search: Optional[str] = Query(None),
-    risk_level: Optional[str] = Query(None)
+@router.get("/export")
+def export_risk_profiles(
+    search: Optional[str] = Query(None, description="搜索过滤"),
+    risk_level: Optional[str] = Query(None, description="风险等级过滤")
 ):
-    """Export threat intelligence rules to CSV format."""
+    """
+    Export threat intelligence rules in a single unified format strictly matching the batch-import parser:
+    Format per line: 域名,风险等级,分类,标签(以/分隔),备注
+    Root wildcard domains are prefixed with *.
+    """
     profiles, _ = crud.list_risk_profiles(
         search=search,
         risk_level=risk_level,
         limit=100000,
         offset=0
     )
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["ID", "目标域名", "匹配模式", "风险等级", "风险分类", "风险标签", "来源", "研判说明/依据", "创建时间", "更新时间"])
-
-    risk_label_map = {
-        "critical": "严重(Critical)",
-        "high": "高危(High)",
-        "medium": "中危(Medium)",
-        "low": "低危(Low)",
-        "safe": "安全(Safe)",
-        "pending": "待研判(Pending)"
-    }
-    match_type_map = {
-        "root": "主根域名通配 (*.)",
-        "exact": "精确域名匹配"
-    }
-
+    lines = [
+        "# 网站外部域名提取系统 - 风险情报规则库导出文件",
+        "# 格式规范: 域名,风险等级,分类,标签(斜杠/分隔),备注说明",
+        "# 风险等级支持: critical(严重), high(高危), medium(中危), low(低危), safe(官方安全)",
+        "# 规则通配说明: 以 *. 开头表示主根域名通配 (*.domain.com)，无 *. 表示精确子域名匹配",
+        "# 本文件可直接在「批量导入」界面中粘贴导入或直接选择文件导入",
+    ]
     for p in profiles:
-        raw_tags = p.get("tags") or []
-        tags_str = " / ".join(raw_tags) if isinstance(raw_tags, list) else str(raw_tags)
-        writer.writerow([
-            p["id"],
-            p["domain"],
-            match_type_map.get(p.get("match_type", "root"), p.get("match_type", "root")),
-            risk_label_map.get(p.get("risk_level", "high"), p.get("risk_level", "high")),
-            p.get("category", ""),
-            tags_str,
-            p.get("source", "manual"),
-            p.get("remark", ""),
-            p.get("created_at", ""),
-            p.get("updated_at", "")
-        ])
-
-    csv_content = "\ufeff" + output.getvalue()
-    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return Response(
-        content=csv_content,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="risk_intelligence_profiles_{date_str}.csv"'}
-    )
-
-
-@router.get("/export/json")
-def export_risk_profiles_json(
-    search: Optional[str] = Query(None),
-    risk_level: Optional[str] = Query(None)
-):
-    """Export threat intelligence rules to structured JSON format."""
-    profiles, _ = crud.list_risk_profiles(
-        search=search,
-        risk_level=risk_level,
-        limit=100000,
-        offset=0
-    )
-    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    data = {
-        "exported_at": datetime.now().isoformat(),
-        "total_rules": len(profiles),
-        "profiles": profiles
-    }
-    content = json.dumps(data, ensure_ascii=False, indent=2)
-    return Response(
-        content=content,
-        media_type="application/json; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="risk_intelligence_profiles_{date_str}.json"'}
-    )
-
-
-@router.get("/export/txt")
-def export_risk_profiles_txt(
-    search: Optional[str] = Query(None),
-    risk_level: Optional[str] = Query(None)
-):
-    """Export threat intelligence domains as plain text (one per line)."""
-    profiles, _ = crud.list_risk_profiles(
-        search=search,
-        risk_level=risk_level,
-        limit=100000,
-        offset=0
-    )
-    lines = []
-    for p in profiles:
-        dom = p.get("domain", "")
+        dom = (p.get("domain") or "").strip()
+        if not dom:
+            continue
         if p.get("match_type") == "root":
             dom = f"*.{dom}"
-        lines.append(dom)
 
-    txt_content = "\n".join(lines) + ("\n" if lines else "")
+        level = p.get("risk_level", "high") or "high"
+        category = (p.get("category") or "").replace("\r", " ").replace("\n", " ").replace(",", "，").strip()
+
+        raw_tags = p.get("tags") or []
+        if isinstance(raw_tags, list):
+            tags_str = "/".join(str(t).strip().replace(",", "，") for t in raw_tags if str(t).strip())
+        else:
+            tags_str = str(raw_tags).strip().replace(",", "，")
+
+        remark = (p.get("remark") or "").replace("\r", " ").replace("\n", " ").replace(",", "，").strip()
+
+        lines.append(f"{dom},{level},{category},{tags_str},{remark}")
+
+    txt_content = "\ufeff" + "\n".join(lines) + "\n"
     date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     return Response(
         content=txt_content,
         media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="risk_domains_{date_str}.txt"'}
+        headers={"Content-Disposition": f'attachment; filename="risk_rules_{date_str}.txt"'}
     )
+
+
+@router.get("/export/csv", include_in_schema=False)
+@router.get("/export/txt", include_in_schema=False)
+def export_risk_profiles_alias(
+    search: Optional[str] = Query(None),
+    risk_level: Optional[str] = Query(None)
+):
+    """Backward-compatible alias routing to unified export."""
+    return export_risk_profiles(search=search, risk_level=risk_level)
 
 
 @router.post("")

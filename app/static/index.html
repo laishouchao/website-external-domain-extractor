@@ -1826,23 +1826,11 @@
                             <span v-else>⚡</span>
                             <span>{{ isSyncingHistory ? '正在追溯全库...' : '同步全库历史记录' }}</span>
                         </button>
-                        <a :href="`/api/risk-profiles/export/csv?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`"
+                        <a :href="`/api/risk-profiles/export?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`"
                            download
-                           class="px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/30 rounded-lg transition font-medium flex items-center gap-1"
-                           title="导出当前情报规则为 CSV 表格">
-                            📊 导出 CSV
-                        </a>
-                        <a :href="`/api/risk-profiles/export/json?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`"
-                           download
-                           class="px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 rounded-lg transition font-medium flex items-center gap-1"
-                           title="导出当前情报规则为 JSON 备份数据">
-                            📦 导出 JSON
-                        </a>
-                        <a :href="`/api/risk-profiles/export/txt?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`"
-                           download
-                           class="px-2.5 py-1.5 bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/30 rounded-lg transition font-medium flex items-center gap-1"
-                           title="导出纯域名列表 TXT">
-                            📥 导出 TXT
+                           class="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 rounded-lg transition font-medium flex items-center gap-1.5"
+                           title="导出情报规则（格式严格匹配导入功能，支持直接用于备份或跨系统导入）">
+                            📥 导出规则
                         </a>
                     </div>
                 </div>
@@ -1909,14 +1897,26 @@
                 <!-- Form: Batch Import Profiles -->
                 <div v-if="showBatchImportProfilesForm" class="bg-slate-950 p-4 rounded-xl border border-indigo-800/40 space-y-3 text-xs">
                     <div class="font-bold text-indigo-300 flex items-center justify-between">
-                        <span>📑 批量导入威胁情报域名列表</span>
-                        <button @click="showBatchImportProfilesForm = false" class="text-slate-500 hover:text-slate-300">✕</button>
+                        <div class="flex items-center gap-2">
+                            <span>📑 批量导入威胁情报域名列表</span>
+                            <span class="text-[11px] text-slate-400 font-normal">（格式严格兼容导出的规则文件）</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input type="file" ref="profileFileInput" accept=".txt,.csv" class="hidden" @change="handleProfileFileUpload">
+                            <button @click="$refs.profileFileInput && $refs.profileFileInput.click()" class="px-2.5 py-1 rounded bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/50 flex items-center gap-1 transition">
+                                📁 从规则文件读取
+                            </button>
+                            <button @click="showBatchImportProfilesForm = false" class="text-slate-500 hover:text-slate-300">✕</button>
+                        </div>
                     </div>
                     <div>
-                        <textarea v-model="batchImportProfilesText" rows="5"
-                                  placeholder="每行一个域名或规则，例如：&#10;evil-site.com&#10;*.phishing-network.xyz,critical,钓鱼欺诈,钓鱼/诈骗&#10;adtracker.cc,medium,广告追踪&#10;support.internal.com,safe,内部官方白名单&#10;# 支持纯域名或逗号分隔：域名,风险等级,分类,标签"
+                        <textarea v-model="batchImportProfilesText" rows="6"
+                                  placeholder="每行一条规则，格式：域名,风险等级,分类,标签(斜杠分隔),备注说明&#10;例如：&#10;*.phishing-network.xyz,critical,钓鱼欺诈,钓鱼/诈骗,诱导支付恶意挂马&#10;evil-site.com,high,黑产博彩,博彩/暗链,外部威胁情报发现&#10;adtracker.cc,medium,广告追踪,追踪/统计,广告联盟推送&#10;support.internal.com,safe,内部官方白名单,官方服务,核心基础设施&#10;# 支持纯域名或逗号分隔全字段规则，与导出文件完全兼容"
                                   class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-slate-200 font-mono text-xs focus:border-indigo-500 focus:outline-none"></textarea>
-                        <p class="text-[11px] text-slate-500 mt-1">支持以 *. 开头表示根域名通配模式，导入后将自动生效并通报全库历史更新。</p>
+                        <div class="flex items-center justify-between text-[11px] text-slate-400 mt-1">
+                            <span>💡 域名以 <code class="text-indigo-300">*.</code> 开头表示主根域名通配，无 <code class="text-indigo-300">*.</code> 表示精确匹配。</span>
+                            <span>支持直接粘贴「导出规则」内容或选择文件</span>
+                        </div>
                     </div>
                     <div class="flex items-center justify-end gap-2">
                         <button @click="showBatchImportProfilesForm = false" class="px-3 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700">取消</button>
@@ -1997,11 +1997,9 @@
                     <div class="flex items-center gap-2">
                         <span>共 <strong class="text-white font-mono">{{ riskProfilesTotal }}</strong> 条情报规则</span>
                         <span class="text-slate-600">|</span>
-                        <a :href="`/api/risk-profiles/export/csv?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`" download class="text-emerald-400 hover:underline">📊 导出 CSV</a>
+                        <a :href="`/api/risk-profiles/export?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`" download class="text-indigo-400 hover:underline">📥 导出规则</a>
                         <span class="text-slate-600">|</span>
-                        <a :href="`/api/risk-profiles/export/json?search=${encodeURIComponent(riskProfileSearch || '')}&risk_level=${encodeURIComponent(riskProfileLevelFilter || '')}`" download class="text-indigo-400 hover:underline">📦 导出 JSON</a>
-                        <span class="text-slate-600">|</span>
-                        <span class="text-slate-500 hidden sm:inline">💡 根域模式自动匹配子域 (*.evil.com 匹配任意级别子域)</span>
+                        <span class="text-slate-500 hidden sm:inline">💡 导出的规则格式与导入功能完全对齐，可直接粘贴或上传导入</span>
                     </div>
                     <div class="flex items-center gap-3">
                         <div class="flex items-center gap-1.5">
