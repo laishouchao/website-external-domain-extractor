@@ -1,0 +1,1480 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>网站外部域名提取与全深度站点地图系统</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            400: '#38bdf8',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            700: '#0369a1',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Vue 3 (local with CDN fallback) -->
+    <script src="/static/vendor/vue.global.prod.js"></script>
+    <script>
+        if (!window.Vue) {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"><\/script>');
+        }
+    </script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-sky-500 selection:text-white">
+
+    <div id="app" class="flex flex-col flex-1" v-cloak>
+        <!-- Top Navbar -->
+        <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-30 shadow-lg">
+            <div class="w-full px-4 sm:px-6 lg:px-8 xl:px-10 h-16 flex items-center justify-between">
+                <div class="flex items-center space-x-3 cursor-pointer" @click="switchView('tasks')">
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20 text-white font-bold text-xl">
+                        🌐
+                    </div>
+                    <div>
+                        <h1 class="text-base font-bold text-white tracking-wide flex items-center gap-2">
+                            网站外部域名提取与全深度网站地图系统
+                            <span class="text-xs font-normal px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20">v1.0</span>
+                        </h1>
+                        <p class="text-xs text-slate-400">自动化全站递归爬虫 • 链接+文本域名提取 • 溯源分析</p>
+                    </div>
+                </div>
+
+                <!-- Center View Navigation Switcher -->
+                <nav class="hidden md:flex items-center space-x-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
+                    <button @click="switchView('tasks')" :class="currentView === 'tasks' ? 'bg-sky-500/20 text-sky-400 font-semibold border border-sky-500/30' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'" class="px-3.5 py-1.5 rounded-lg text-xs transition flex items-center gap-1.5">
+                        <span>📋</span>
+                        <span>扫描任务列表</span>
+                    </button>
+                    <button @click="switchView('global_domains')" :class="currentView === 'global_domains' ? 'bg-indigo-500/20 text-indigo-400 font-semibold border border-indigo-500/30' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'" class="px-3.5 py-1.5 rounded-lg text-xs transition flex items-center gap-1.5">
+                        <span>🌐</span>
+                        <span>全局外部域名总库</span>
+                        <span v-if="globalDomainStats.total_unique_domains" class="ml-1 px-1.5 py-0.2 rounded-full bg-indigo-950 text-indigo-300 font-mono text-[10px] border border-indigo-800/50">{{ globalDomainStats.total_unique_domains }}</span>
+                    </button>
+                </nav>
+
+                <div class="flex items-center space-x-2.5">
+                    <button v-if="currentView === 'detail'" @click="switchView('tasks')" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition flex items-center gap-1.5 border border-slate-700">
+                        <span>← 返回任务列表</span>
+                    </button>
+                    <button v-if="currentView === 'detail'" @click="switchView('global_domains')" class="text-xs px-3 py-1.5 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 transition flex items-center gap-1.5 border border-indigo-800/60">
+                        <span>🌐 全局外部域名总库</span>
+                    </button>
+                    <button @click="openBatchModal" class="text-xs font-semibold px-3.5 py-2 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 transition flex items-center gap-1.5">
+                        <span>📑</span> 批量导入任务
+                    </button>
+                    <button @click="openCreateModal" class="text-xs font-semibold px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-white transition shadow-md shadow-sky-500/20 flex items-center gap-1.5">
+                        <span class="text-base leading-none">+</span> 新建扫描任务
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Body -->
+        <main class="flex-1 w-full px-4 sm:px-6 lg:px-8 xl:px-10 py-6">
+
+            <!-- ================= VIEW 1: TASKS DASHBOARD ================= -->
+            <div v-if="currentView === 'tasks'" class="space-y-6">
+                <!-- Summary Metrics Cards -->
+                <div class="grid grid-cols-2 sm:grid-cols-5 gap-3.5">
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-xs font-medium text-slate-400">扫描任务总数</p>
+                            <p class="text-2xl font-bold text-white mt-1">{{ tasks.length }}</p>
+                        </div>
+                        <div class="w-11 h-11 rounded-lg bg-slate-800 flex items-center justify-center text-xl text-sky-400">📋</div>
+                    </div>
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-xs font-medium text-slate-400">正在扫描</p>
+                            <p class="text-2xl font-bold text-emerald-400 mt-1">{{ runningTasksCount }}</p>
+                        </div>
+                        <div class="w-11 h-11 rounded-lg bg-emerald-950/50 border border-emerald-800/40 flex items-center justify-center text-xl text-emerald-400">⚡</div>
+                    </div>
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-xs font-medium text-slate-400">累计爬取页面</p>
+                            <p class="text-2xl font-bold text-amber-400 mt-1">{{ totalPagesCrawled }}</p>
+                        </div>
+                        <div class="w-11 h-11 rounded-lg bg-amber-950/50 border border-amber-800/40 flex items-center justify-center text-xl text-amber-400">📄</div>
+                    </div>
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-xs font-medium text-slate-400">提取外部域名</p>
+                            <p class="text-2xl font-bold text-indigo-400 mt-1">{{ totalExtDomainsFound }}</p>
+                        </div>
+                        <div class="w-11 h-11 rounded-lg bg-indigo-950/50 border border-indigo-800/40 flex items-center justify-center text-xl text-indigo-400">🔗</div>
+                    </div>
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-xs font-medium text-slate-400">发现本站子域名</p>
+                            <p class="text-2xl font-bold text-purple-400 mt-1">{{ totalSubdomainsFound }}</p>
+                        </div>
+                        <div class="w-11 h-11 rounded-lg bg-purple-950/50 border border-purple-800/40 flex items-center justify-center text-xl text-purple-400">🎯</div>
+                    </div>
+                </div>
+
+                <!-- Task List Card -->
+                <div class="bg-slate-900 border border-slate-800 rounded-xl shadow-md overflow-hidden">
+                    <div class="p-4 sm:px-6 border-b border-slate-800 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <h2 class="font-semibold text-slate-200">扫描任务列表</h2>
+                            <span class="text-xs text-slate-400 font-mono">({{ tasks.length }} 个任务)</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button @click="openBatchModal" class="text-xs px-2.5 py-1 rounded bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-300 border border-indigo-800/50 transition flex items-center gap-1 font-medium">
+                                📑 批量导入
+                            </button>
+                            <button @click="loadTasks" class="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition flex items-center gap-1">
+                                🔄 刷新列表
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Batch Operations Toolbar -->
+                    <div v-if="selectedTaskIds.length > 0" class="bg-indigo-950/80 border-b border-indigo-800/60 px-4 sm:px-6 py-2.5 flex items-center justify-between flex-wrap gap-2 text-xs">
+                        <div class="flex items-center gap-3 text-indigo-200">
+                            <span class="font-semibold">已勾选 <span class="text-amber-300 font-mono font-bold">{{ selectedTaskIds.length }}</span> 个任务</span>
+                            <button @click="selectedTaskIds = []" class="text-indigo-400 hover:text-indigo-300 underline text-[11px]">取消全选</button>
+                        </div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <button @click="executeBatchAction('start')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded transition flex items-center gap-1">
+                                ▶ 批量启动
+                            </button>
+                            <button @click="executeBatchAction('pause')" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white font-medium rounded transition flex items-center gap-1">
+                                ⏸ 批量暂停
+                            </button>
+                            <button @click="executeBatchAction('resume')" class="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white font-medium rounded transition flex items-center gap-1">
+                                ▶ 批量继续
+                            </button>
+                            <button @click="executeBatchAction('stop')" class="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded transition flex items-center gap-1">
+                                ⏹ 批量停止
+                            </button>
+                            <button :disabled="isBatchOperating"
+                                    @click="executeBatchAction('delete')"
+                                    class="px-2.5 py-1 bg-slate-900 hover:bg-rose-950 text-rose-400 border border-rose-800/60 font-medium rounded transition flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <span v-if="isBatchOperating && currentBatchAction === 'delete'" class="inline-flex items-center gap-1">
+                                    <span class="inline-block animate-spin">⏳</span> 正在批量删除...
+                                </span>
+                                <span v-else>🗑 批量删除</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Empty State -->
+                    <div v-if="tasks.length === 0" class="py-16 text-center">
+                        <div class="text-5xl mb-3">🔍</div>
+                        <h3 class="text-base font-semibold text-slate-300">暂无扫描任务</h3>
+                        <p class="text-xs text-slate-500 mt-1">点击右上角 “新建扫描任务” 或 “批量导入任务” 开始全深度探测</p>
+                        <div class="flex items-center justify-center gap-3 mt-4">
+                            <button @click="openCreateModal" class="text-xs font-semibold px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-white transition shadow-md shadow-sky-500/20">
+                                + 新建扫描任务
+                            </button>
+                            <button @click="openBatchModal" class="text-xs font-semibold px-4 py-2 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 transition flex items-center gap-1.5">
+                                <span>📑</span> 批量导入任务
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Tasks Table -->
+                    <div v-else class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-950/60 text-slate-400 border-b border-slate-800 font-medium whitespace-nowrap">
+                                <tr>
+                                    <th class="py-3 px-4 w-10 text-center">
+                                        <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" class="rounded bg-slate-900 border-slate-700 text-sky-500 cursor-pointer">
+                                    </th>
+                                    <th class="py-3 px-4 min-w-[220px]">任务名称 / 目标站点</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">状态</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">爬取进度 (页面)</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">提取外部域名 / 本站子域名</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">创建时间</th>
+                                    <th class="py-3 px-4 text-right whitespace-nowrap">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800/60 text-slate-300">
+                                <tr v-for="t in tasks" :key="t.id" :class="selectedTaskIds.includes(t.id) ? 'bg-sky-950/20' : ''" class="hover:bg-slate-800/40 transition">
+                                    <td class="py-3 px-4 text-center">
+                                        <input type="checkbox" :value="t.id" v-model="selectedTaskIds" class="rounded bg-slate-900 border-slate-700 text-sky-500 cursor-pointer">
+                                    </td>
+                                    <td class="py-3 px-4">
+                                        <div class="font-semibold text-white hover:text-sky-400 cursor-pointer flex items-center gap-1.5" @click="enterTask(t)">
+                                            {{ t.name }}
+                                        </div>
+                                        <div class="text-xs text-slate-400 font-mono flex items-center gap-1 mt-0.5">
+                                            <span>🔗</span>
+                                            <a :href="t.target_url" target="_blank" class="hover:underline hover:text-sky-300 truncate max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg xl:max-w-2xl block" :title="t.target_url" @click.stop>{{ t.target_url }}</a>
+                                        </div>
+                                    </td>
+                                    <td class="py-3 px-4 whitespace-nowrap">
+                                        <div class="flex items-center gap-2">
+                                            <span :class="getStatusBadgeClass(t.status)" class="px-2.5 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5 whitespace-nowrap">
+                                                <span v-if="t.status === 'running'" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse-dot"></span>
+                                                {{ getStatusLabel(t.status) }}
+                                            </span>
+                                            <span v-if="t.status === 'running'" class="px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-800/50 text-emerald-300 font-mono font-semibold text-[11px] inline-flex items-center gap-1 whitespace-nowrap" title="当前实时扫描速度">
+                                                <span>⚡</span>
+                                                <span>{{ t.current_speed || 0 }} 页/秒</span>
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td class="py-3 px-4 whitespace-nowrap">
+                                        <div class="flex items-center gap-2">
+                                            <span class="font-mono text-slate-200">{{ t.pages_crawled }}</span>
+                                            <span class="text-slate-500 font-mono">/ {{ t.pages_total }}</span>
+                                        </div>
+                                        <div class="w-36 bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1.5">
+                                            <div class="bg-sky-500 h-full rounded-full transition-all duration-300"
+                                                 :style="{ width: getProgressPercent(t) + '%' }"></div>
+                                        </div>
+                                    </td>
+                                    <td class="py-3 px-4 whitespace-nowrap">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="px-2 py-0.5 rounded-md bg-indigo-950/60 border border-indigo-800/40 text-indigo-300 font-mono font-semibold whitespace-nowrap" title="去重外部域名">
+                                                外部: {{ t.external_domains_count }}
+                                            </span>
+                                            <span class="px-2 py-0.5 rounded-md bg-purple-950/60 border border-purple-800/40 text-purple-300 font-mono font-semibold whitespace-nowrap" title="发现本站子域名">
+                                                子域: {{ t.subdomains_count || 0 }}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td class="py-3 px-4 text-slate-400 font-mono whitespace-nowrap">
+                                        {{ t.created_at }}
+                                    </td>
+                                    <td class="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                                        <button @click="enterTask(t)" class="px-2.5 py-1 bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-600/30 rounded transition">
+                                            查看详情
+                                        </button>
+                                        <button v-if="t.status === 'pending' || t.status === 'stopped' || t.status === 'failed'"
+                                                @click="startTask(t.id)" class="px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-600/30 rounded transition">
+                                            启动
+                                        </button>
+                                        <button v-if="t.status === 'running'"
+                                                @click="pauseTask(t.id)" class="px-2 py-1 bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-600/30 rounded transition">
+                                            暂停
+                                        </button>
+                                        <button v-if="t.status === 'paused'"
+                                                @click="resumeTask(t.id)" class="px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-600/30 rounded transition">
+                                            继续
+                                        </button>
+                                        <button v-if="t.status === 'running' || t.status === 'paused'"
+                                                @click="stopTask(t.id)" class="px-2 py-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-600/30 rounded transition">
+                                            停止
+                                        </button>
+                                        <button :disabled="deletingTaskIds.includes(t.id)"
+                                                @click="deleteTask(t.id)"
+                                                class="px-2 py-1 bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-800 rounded transition disabled:opacity-50 disabled:cursor-not-allowed">
+                                            <span v-if="deletingTaskIds.includes(t.id)" class="inline-flex items-center gap-1 text-amber-400">
+                                                <span class="inline-block animate-spin">⏳</span> 删除中...
+                                            </span>
+                                            <span v-else>删除</span>
+                                        </button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= VIEW 2: TASK WORKSPACE & DETAILS ================= -->
+            <div v-if="currentView === 'detail' && activeTask" class="space-y-5">
+                <!-- Task Header Bar -->
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+                    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                        <div class="space-y-1">
+                            <div class="flex items-center gap-2.5 flex-wrap">
+                                <h2 class="text-xl font-bold text-white">{{ activeTask.name }}</h2>
+                                <span :class="getStatusBadgeClass(activeTask.status)" class="px-2.5 py-0.5 rounded-full text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap flex-shrink-0">
+                                    <span v-if="activeTask.status === 'running'" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse-dot"></span>
+                                    {{ getStatusLabel(activeTask.status) }}
+                                </span>
+                                <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono whitespace-nowrap flex-shrink-0">
+                                    范围: {{ activeTask.config?.scope_mode === 'exact_host' ? '精确主机名' : '全根域名' }}
+                                </span>
+                                <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono whitespace-nowrap flex-shrink-0">
+                                    最大深度: {{ activeTask.config?.max_depth === 0 ? '不限' : activeTask.config?.max_depth }}
+                                </span>
+                            </div>
+                            <div class="flex items-center gap-2 text-xs text-slate-400">
+                                <span class="whitespace-nowrap flex-shrink-0">目标站点:</span>
+                                <a :href="activeTask.target_url" target="_blank" class="text-sky-400 hover:underline font-mono text-sm break-all">{{ activeTask.target_url }}</a>
+                            </div>
+                        </div>
+
+                        <!-- Action Control Buttons -->
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <button v-if="activeTask.status === 'pending' || activeTask.status === 'stopped' || activeTask.status === 'failed'"
+                                    @click="startTask(activeTask.id)" class="text-xs px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold rounded-lg shadow-sm transition flex items-center gap-1.5 whitespace-nowrap flex-shrink-0">
+                                ▶ 启动扫描
+                            </button>
+                            <button v-if="activeTask.status === 'running'"
+                                    @click="pauseTask(activeTask.id)" class="text-xs px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-white font-semibold rounded-lg shadow-sm transition flex items-center gap-1.5 whitespace-nowrap flex-shrink-0">
+                                ⏸ 暂停
+                            </button>
+                            <button v-if="activeTask.status === 'paused'"
+                                    @click="resumeTask(activeTask.id)" class="text-xs px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold rounded-lg shadow-sm transition flex items-center gap-1.5 whitespace-nowrap flex-shrink-0">
+                                ▶ 继续
+                            </button>
+                            <button v-if="activeTask.status === 'running' || activeTask.status === 'paused'"
+                                    @click="stopTask(activeTask.id)" class="text-xs px-3.5 py-2 bg-rose-500 hover:bg-rose-400 text-white font-semibold rounded-lg shadow-sm transition flex items-center gap-1.5 whitespace-nowrap flex-shrink-0">
+                                ⏹ 停止
+                            </button>
+                            <button @click="retryTask(activeTask.id)" class="text-xs px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg transition flex items-center gap-1.5 whitespace-nowrap flex-shrink-0">
+                                🔄 重置并重新扫描
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Metrics Ribbon -->
+                    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-4 pt-4 border-t border-slate-800 text-xs">
+                        <div class="bg-slate-950/60 rounded-lg p-2.5 border border-slate-800">
+                            <span class="text-slate-400 whitespace-nowrap">已扫描页面/资源</span>
+                            <p class="text-lg font-bold font-mono text-sky-400 mt-0.5 whitespace-nowrap">{{ activeTask.pages_crawled }} <span class="text-xs font-normal text-slate-500">/ {{ activeTask.pages_total }} 队列</span></p>
+                        </div>
+                        <div class="bg-slate-950/60 rounded-lg p-2.5 border border-slate-800 relative overflow-hidden">
+                            <div class="flex items-center justify-between">
+                                <span class="text-slate-400 whitespace-nowrap">当前扫描速度</span>
+                                <span v-if="activeTask.status === 'running'" class="inline-flex items-center px-1.5 py-0.2 text-[10px] font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800/60 rounded-full animate-pulse">
+                                    实时
+                                </span>
+                            </div>
+                            <p class="text-lg font-bold font-mono text-emerald-400 mt-0.5 flex items-baseline gap-1 whitespace-nowrap">
+                                <span>{{ activeTask.current_speed !== undefined ? activeTask.current_speed : (liveProgress.speed !== undefined ? liveProgress.speed : 0) }}</span>
+                                <span class="text-xs font-normal text-slate-400">页/秒</span>
+                            </p>
+                            <div class="text-[10px] text-slate-500 font-mono mt-0.5 truncate whitespace-nowrap">
+                                均速: {{ activeTask.avg_speed !== undefined ? activeTask.avg_speed : (liveProgress.avg_speed !== undefined ? liveProgress.avg_speed : 0) }} 页/秒
+                            </div>
+                        </div>
+                        <div class="bg-slate-950/60 rounded-lg p-2.5 border border-slate-800">
+                            <span class="text-slate-400 whitespace-nowrap">去重外部域名</span>
+                            <p class="text-lg font-bold font-mono text-indigo-400 mt-0.5 whitespace-nowrap">{{ domainStats.total_unique_domains || activeTask.external_domains_count }} <span class="text-xs font-normal text-slate-500">个</span></p>
+                        </div>
+                        <div class="bg-slate-950/60 rounded-lg p-2.5 border border-slate-800">
+                            <span class="text-slate-400 whitespace-nowrap">发现本站子域名</span>
+                            <p class="text-lg font-bold font-mono text-purple-400 mt-0.5 whitespace-nowrap">{{ subdomainStats.total_unique_subdomains || activeTask.subdomains_count || 0 }} <span class="text-xs font-normal text-slate-500">个</span></p>
+                        </div>
+                        <div class="bg-slate-950/60 rounded-lg p-2.5 border border-slate-800">
+                            <span class="text-slate-400 whitespace-nowrap">外部主根域名</span>
+                            <p class="text-lg font-bold font-mono text-amber-400 mt-0.5 whitespace-nowrap">{{ domainStats.unique_root_domains || 0 }} <span class="text-xs font-normal text-slate-500">个</span></p>
+                        </div>
+                        <div class="bg-slate-950/60 rounded-lg p-2.5 border border-slate-800">
+                            <span class="text-slate-400 whitespace-nowrap">提取类型分布</span>
+                            <p class="text-xs font-mono text-slate-300 mt-1 whitespace-nowrap">
+                                链接: <span class="text-emerald-400 font-semibold">{{ domainStats.link_domains || 0 }}</span> | 文本: <span class="text-cyan-400 font-semibold">{{ domainStats.text_domains || 0 }}</span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tabs Navigation -->
+                <div class="flex items-center space-x-2 border-b border-slate-800">
+                    <button @click="activeTab = 'domains'"
+                            :class="activeTab === 'domains' ? 'border-sky-500 text-sky-400 bg-slate-900/60' : 'border-transparent text-slate-400 hover:text-slate-300'"
+                            class="py-2.5 px-4 font-semibold text-xs border-b-2 rounded-t-lg transition flex items-center gap-2">
+                        <span>🌐 提取外部域名全集</span>
+                        <span class="px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 text-xs font-mono">{{ domainStats.total_unique_domains || activeTask.external_domains_count }}</span>
+                    </button>
+                    <button @click="activeTab = 'subdomains'"
+                            :class="activeTab === 'subdomains' ? 'border-sky-500 text-sky-400 bg-slate-900/60' : 'border-transparent text-slate-400 hover:text-slate-300'"
+                            class="py-2.5 px-4 font-semibold text-xs border-b-2 rounded-t-lg transition flex items-center gap-2">
+                        <span>🎯 本站子域名</span>
+                        <span class="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-xs font-mono">{{ subdomainStats.total_unique_subdomains || activeTask.subdomains_count || 0 }}</span>
+                    </button>
+                    <button @click="activeTab = 'sitemap'"
+                            :class="activeTab === 'sitemap' ? 'border-sky-500 text-sky-400 bg-slate-900/60' : 'border-transparent text-slate-400 hover:text-slate-300'"
+                            class="py-2.5 px-4 font-semibold text-xs border-b-2 rounded-t-lg transition flex items-center gap-2">
+                        <span>🗺️ 全深度网站地图</span>
+                        <span class="px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 text-xs font-mono">{{ activeTask.pages_crawled }}</span>
+                    </button>
+                    <button @click="activeTab = 'logs'"
+                            :class="activeTab === 'logs' ? 'border-sky-500 text-sky-400 bg-slate-900/60' : 'border-transparent text-slate-400 hover:text-slate-300'"
+                            class="py-2.5 px-4 font-semibold text-xs border-b-2 rounded-t-lg transition flex items-center gap-2">
+                        <span>⚡ 实时监控与日志</span>
+                        <span v-if="activeTask.status === 'running'" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse-dot"></span>
+                    </button>
+                    <button @click="activeTab = 'analytics'"
+                            :class="activeTab === 'analytics' ? 'border-sky-500 text-sky-400 bg-slate-900/60' : 'border-transparent text-slate-400 hover:text-slate-300'"
+                            class="py-2.5 px-4 font-semibold text-xs border-b-2 rounded-t-lg transition flex items-center gap-2">
+                        <span>📊 域名分布与统计分析</span>
+                    </button>
+                </div>
+
+                <!-- ================= TAB 1: EXTERNAL DOMAINS ================= -->
+                <div v-show="activeTab === 'domains'" class="space-y-4">
+                    <!-- Filters & Export Bar -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col xl:flex-row xl:items-center justify-between gap-3 text-xs">
+                        <div class="flex items-center gap-2.5 flex-wrap flex-1">
+                            <input v-model="domainFilters.search" @input="loadDomains(1)" placeholder="搜索域名或主根域名..."
+                                   class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 w-56 sm:w-64 lg:w-72 font-mono">
+                            
+                            <select v-model="domainFilters.sourceType" @change="loadDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                                <option value="">所有提取来源</option>
+                                <option value="link">包含链接属性 (a/img/script)</option>
+                                <option value="text">包含非链接文本/代码</option>
+                                <option value="asset">包含 JS/CSS 文件内部代码</option>
+                            </select>
+
+                            <select v-model="domainFilters.sortBy" @change="loadDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                                <option value="occurrence_count">按出现频次降序</option>
+                                <option value="domain">按域名名称排序</option>
+                            </select>
+
+                            <button @click="loadDomains(1)" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 whitespace-nowrap">
+                                筛选
+                            </button>
+
+                            <!-- IANA Root Zone Badge -->
+                            <span class="px-2.5 py-1 bg-emerald-950/60 border border-emerald-800/50 text-emerald-400 rounded-lg text-[11px] font-medium inline-flex items-center gap-1 cursor-help whitespace-nowrap" title="所有提取域名均已通过国际 IANA Root Zone 官方注册根域名库 (1438+ TLDs) 严格准入验证">
+                                <span>🛡️</span> IANA 国际官方根域名准入
+                            </span>
+                        </div>
+
+                        <!-- Actions & Export Dropdown -->
+                        <div class="flex items-center gap-2 flex-wrap flex-shrink-0">
+                            <button @click="cleanDomains(activeTask.id)" :disabled="cleaningDomains" class="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 rounded-lg transition flex items-center gap-1 font-medium disabled:opacity-50 whitespace-nowrap" title="基于 IANA 官方注册根域名库与代码语法深度清洗，一键剔除伪域名">
+                                <span v-if="cleaningDomains" class="animate-spin">⏳</span>
+                                <span v-else>🧹</span>
+                                <span>清洗伪域名</span>
+                            </button>
+                            <a :href="`/api/tasks/${activeTask.id}/export/txt`" download class="px-3 py-1.5 bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                                📥 导出 TXT
+                            </a>
+                            <a :href="`/api/tasks/${activeTask.id}/export/csv`" download class="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                                📊 导出 CSV
+                            </a>
+                            <a :href="`/api/tasks/${activeTask.id}/export/json`" download class="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                                📦 导出 JSON
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Domains Table -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-md">
+                        <div v-if="domainsList.length === 0" class="py-12 text-center text-slate-500 text-xs">
+                            <p class="text-3xl mb-2">🌐</p>
+                            <p>未发现符合条件的外部域名</p>
+                        </div>
+                        <div v-else class="overflow-x-auto">
+                            <table class="w-full text-left text-xs">
+                                <thead class="bg-slate-950/60 text-slate-400 border-b border-slate-800 font-medium whitespace-nowrap">
+                                    <tr>
+                                        <th class="py-3 px-4">提取外部域名 (FQDN)</th>
+                                        <th class="py-3 px-4">主根域名 (Root)</th>
+                                        <th class="py-3 px-4">来源特征</th>
+                                        <th class="py-3 px-4">页面出现频次</th>
+                                        <th class="py-3 px-4">示例来源页面</th>
+                                        <th class="py-3 px-4 text-right">溯源与证据</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800/60 text-slate-300">
+                                    <tr v-for="d in domainsList" :key="d.id" class="hover:bg-slate-800/40 transition">
+                                        <td class="py-2.5 px-4 font-mono font-bold text-sky-300 whitespace-nowrap flex items-center gap-1.5">
+                                            <span>🔗</span>
+                                            <span>{{ d.domain }}</span>
+                                        </td>
+                                        <td class="py-2.5 px-4 font-mono text-slate-400 whitespace-nowrap">
+                                            <span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{{ d.root_domain }}</span>
+                                        </td>
+                                        <td class="py-2.5 px-4 space-x-1 whitespace-nowrap">
+                                            <span v-if="d.has_link" class="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800/40 text-emerald-400 text-xs">
+                                                链接属性
+                                            </span>
+                                            <span v-if="d.has_text" class="px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800/40 text-cyan-400 text-xs">
+                                                文本/代码
+                                            </span>
+                                            <span v-if="d.sample_page_url && (d.sample_page_url.includes('.js') || d.sample_page_url.includes('.css'))" class="px-2 py-0.5 rounded bg-amber-950 border border-amber-800/40 text-amber-300 text-xs font-semibold">
+                                                JS/CSS文件
+                                            </span>
+                                        </td>
+
+                                        <td class="py-2.5 px-4 font-mono whitespace-nowrap">
+                                            <span class="px-2 py-0.5 rounded-full bg-slate-800 text-amber-300 font-semibold">{{ d.occurrence_count }} 次</span>
+                                        </td>
+                                        <td class="py-2.5 px-4 max-w-xs md:max-w-sm lg:max-w-md xl:max-w-lg 2xl:max-w-2xl truncate text-slate-400 font-mono" :title="d.sample_page_url">
+                                            {{ d.sample_page_url }}
+                                        </td>
+                                        <td class="py-2.5 px-4 text-right whitespace-nowrap">
+                                            <button @click="openEvidenceModal(d.domain)" class="px-2.5 py-1 bg-slate-800 hover:bg-sky-950 hover:text-sky-300 border border-slate-700 hover:border-sky-800 rounded transition font-medium">
+                                                🔍 查看证据
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Pagination -->
+                        <div class="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                            <span>共 {{ domainsTotal }} 个外部域名</span>
+                            <div class="flex items-center gap-1.5">
+                                <button :disabled="domainPage <= 1" @click="loadDomains(domainPage - 1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">上一页</button>
+                                <span class="font-mono text-slate-300">第 {{ domainPage }} / {{ Math.ceil(domainsTotal / 50) || 1 }} 页</span>
+                                <button :disabled="domainPage * 50 >= domainsTotal" @click="loadDomains(domainPage + 1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">下一页</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ================= TAB: SUBDOMAINS ================= -->
+                <div v-show="activeTab === 'subdomains'" class="space-y-4">
+                    <!-- Filters & Export Bar -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col xl:flex-row xl:items-center justify-between gap-3 text-xs">
+                        <div class="flex items-center gap-2.5 flex-wrap flex-1">
+                            <input v-model="subdomainFilters.search" @input="loadSubdomains(1)" placeholder="搜索本站子域名..."
+                                   class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-purple-500 w-56 sm:w-64 lg:w-72 font-mono">
+                            
+                            <select v-model="subdomainFilters.sourceType" @change="loadSubdomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                                <option value="">所有提取来源</option>
+                                <option value="link">包含链接属性 (a/img/script)</option>
+                                <option value="text">包含非链接文本/代码</option>
+                            </select>
+
+                            <select v-model="subdomainFilters.sortBy" @change="loadSubdomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                                <option value="occurrence_count">按出现频次降序</option>
+                                <option value="subdomain">按子域名名称排序</option>
+                            </select>
+
+                            <button @click="loadSubdomains(1)" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 whitespace-nowrap">
+                                筛选
+                            </button>
+                        </div>
+
+                        <!-- Export Dropdown -->
+                        <div class="flex items-center gap-2 flex-wrap flex-shrink-0">
+                            <a :href="`/api/tasks/${activeTask.id}/subdomains/export/txt`" download class="px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border border-purple-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                                📥 导出 TXT (纯子域名)
+                            </a>
+                            <a :href="`/api/tasks/${activeTask.id}/subdomains/export/csv`" download class="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                                📊 导出 CSV 表格
+                            </a>
+                            <a :href="`/api/tasks/${activeTask.id}/subdomains/export/json`" download class="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                                📦 导出 JSON
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Subdomains Table -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-md">
+                        <div v-if="subdomainsList.length === 0" class="py-12 text-center text-slate-500 text-xs">
+                            <p class="text-3xl mb-2">🎯</p>
+                            <p>未发现符合条件的本站子域名</p>
+                        </div>
+                        <div v-else class="overflow-x-auto">
+                            <table class="w-full text-left text-xs">
+                                <thead class="bg-slate-950/60 text-slate-400 border-b border-slate-800 font-medium whitespace-nowrap">
+                                    <tr>
+                                        <th class="py-3 px-4">发现本站子域名 (FQDN)</th>
+                                        <th class="py-3 px-4">所属根域名 (Root)</th>
+                                        <th class="py-3 px-4">来源特征</th>
+                                        <th class="py-3 px-4">页面出现频次</th>
+                                        <th class="py-3 px-4">示例来源页面</th>
+                                        <th class="py-3 px-4 text-right">溯源与证据</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800/60 text-slate-300">
+                                    <tr v-for="s in subdomainsList" :key="s.id" class="hover:bg-slate-800/40 transition">
+                                        <td class="py-2.5 px-4 font-mono font-bold text-purple-300 whitespace-nowrap flex items-center gap-1.5">
+                                            <span>🎯</span>
+                                            <span>{{ s.subdomain }}</span>
+                                        </td>
+                                        <td class="py-2.5 px-4 font-mono text-slate-400 whitespace-nowrap">
+                                            <span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{{ s.root_domain }}</span>
+                                        </td>
+                                        <td class="py-2.5 px-4 space-x-1 whitespace-nowrap">
+                                            <span v-if="s.has_link" class="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800/40 text-emerald-400 text-xs">
+                                                链接属性
+                                            </span>
+                                            <span v-if="s.has_text" class="px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800/40 text-cyan-400 text-xs">
+                                                文本/代码
+                                            </span>
+                                            <span v-if="s.sample_page_url && (s.sample_page_url.includes('.js') || s.sample_page_url.includes('.css'))" class="px-2 py-0.5 rounded bg-amber-950 border border-amber-800/40 text-amber-300 text-xs font-semibold">
+                                                JS/CSS文件
+                                            </span>
+                                        </td>
+
+                                        <td class="py-2.5 px-4 font-mono whitespace-nowrap">
+                                            <span class="px-2 py-0.5 rounded-full bg-slate-800 text-amber-300 font-semibold">{{ s.occurrence_count }} 次</span>
+                                        </td>
+                                        <td class="py-2.5 px-4 max-w-xs md:max-w-sm lg:max-w-md xl:max-w-lg 2xl:max-w-2xl truncate text-slate-400 font-mono" :title="s.sample_page_url">
+                                            {{ s.sample_page_url }}
+                                        </td>
+                                        <td class="py-2.5 px-4 text-right whitespace-nowrap">
+                                            <button @click="openEvidenceModal(s.subdomain)" class="px-2.5 py-1 bg-slate-800 hover:bg-purple-950 hover:text-purple-300 border border-slate-700 hover:border-purple-800 rounded transition font-medium">
+                                                🔍 查看证据
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Pagination -->
+                        <div class="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                            <span>共 {{ subdomainsTotal }} 个本站子域名</span>
+                            <div class="flex items-center gap-1.5">
+                                <button :disabled="subdomainPage <= 1" @click="loadSubdomains(subdomainPage - 1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">上一页</button>
+                                <span class="font-mono text-slate-300">第 {{ subdomainPage }} / {{ Math.ceil(subdomainsTotal / 50) || 1 }} 页</span>
+                                <button :disabled="subdomainPage * 50 >= subdomainsTotal" @click="loadSubdomains(subdomainPage + 1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">下一页</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ================= TAB 2: SITEMAP ================= -->
+                <div v-show="activeTab === 'sitemap'" class="space-y-4">
+                    <!-- Filters & Export -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col xl:flex-row xl:items-center justify-between gap-3 text-xs">
+                        <div class="flex items-center gap-2.5 flex-wrap flex-1">
+                            <input v-model="sitemapFilters.search" @input="loadSitemap(1)" placeholder="搜索 URL 或网页标题..."
+                                   class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 w-56 sm:w-64 lg:w-72 font-mono">
+                            
+                            <select v-model="sitemapFilters.depth" @change="loadSitemap(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                                <option value="">所有爬取深度</option>
+                                <option v-for="d in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]" :key="d" :value="d">深度 {{ d }}</option>
+                            </select>
+
+                            <select v-model="sitemapFilters.statusCode" @change="loadSitemap(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                                <option value="">所有状态码</option>
+                                <option value="200">HTTP 200 正常</option>
+                                <option value="301">HTTP 301 重定向</option>
+                                <option value="302">HTTP 302 临时转向</option>
+                                <option value="404">HTTP 404 缺失</option>
+                                <option value="500">HTTP 500 报错</option>
+                            </select>
+
+                            <button @click="loadSitemap(1)" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 whitespace-nowrap">
+                                筛选
+                            </button>
+                        </div>
+
+                        <!-- Sitemap Export Buttons -->
+                        <div class="flex items-center gap-2 flex-wrap flex-shrink-0">
+                            <a :href="`/api/tasks/${activeTask.id}/pages/export/xml`" download class="px-3 py-1.5 bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                                📜 导出标准 Sitemap XML
+                            </a>
+                            <a :href="`/api/tasks/${activeTask.id}/pages/export/csv`" download class="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                                📊 导出页面 CSV
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Sitemap Table -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-md">
+                        <div v-if="sitemapPages.length === 0" class="py-12 text-center text-slate-500 text-xs">
+                            <p class="text-3xl mb-2">🗺️</p>
+                            <p>暂无扫描到的网站地图页面</p>
+                        </div>
+                        <div v-else class="overflow-x-auto">
+                            <table class="w-full text-left text-xs">
+                                <thead class="bg-slate-950/60 text-slate-400 border-b border-slate-800 font-medium whitespace-nowrap">
+                                    <tr>
+                                        <th class="py-3 px-4 min-w-[240px]">页面 URL / 标题</th>
+                                        <th class="py-3 px-4 whitespace-nowrap">深度</th>
+                                        <th class="py-3 px-4 whitespace-nowrap">HTTP 状态</th>
+                                        <th class="py-3 px-4 whitespace-nowrap">提取外部域名</th>
+                                        <th class="py-3 px-4 whitespace-nowrap">响应耗时</th>
+                                        <th class="py-3 px-4 whitespace-nowrap">抓取时间</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800/60 text-slate-300">
+                                    <tr v-for="p in sitemapPages" :key="p.id" class="hover:bg-slate-800/40 transition">
+                                        <td class="py-2.5 px-4 max-w-md lg:max-w-xl xl:max-w-2xl 2xl:max-w-3xl">
+                                            <div class="font-semibold text-slate-200 truncate" :title="p.title">{{ p.title || '（无标题页面）' }}</div>
+                                            <a :href="p.url" target="_blank" class="font-mono text-sky-400 hover:underline truncate block text-xs mt-0.5" :title="p.url">{{ p.url }}</a>
+                                        </td>
+                                        <td class="py-2.5 px-4 whitespace-nowrap">
+                                            <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono font-semibold">
+                                                L{{ p.depth }}
+                                            </span>
+                                        </td>
+                                        <td class="py-2.5 px-4 whitespace-nowrap">
+                                            <span :class="p.status_code >= 200 && p.status_code < 300 ? 'bg-emerald-950 text-emerald-400 border-emerald-800/40' : (p.status_code >= 300 && p.status_code < 400 ? 'bg-amber-950 text-amber-400 border-amber-800/40' : 'bg-rose-950 text-rose-400 border-rose-800/40')"
+                                                  class="px-2 py-0.5 rounded border font-mono font-bold">
+                                                {{ p.status_code || 'ERR' }}
+                                            </span>
+                                        </td>
+                                        <td class="py-2.5 px-4 whitespace-nowrap">
+                                            <span :class="p.external_domains_count > 0 ? 'text-indigo-400 font-bold' : 'text-slate-500'" class="font-mono">
+                                                {{ p.external_domains_count }} 个
+                                            </span>
+                                        </td>
+                                        <td class="py-2.5 px-4 font-mono text-slate-400 whitespace-nowrap">
+                                            {{ p.response_time_ms }} ms
+                                        </td>
+                                        <td class="py-2.5 px-4 font-mono text-slate-500 whitespace-nowrap">
+                                            {{ p.crawled_at }}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Pagination -->
+                        <div class="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                            <span>共 {{ sitemapTotal }} 个页面</span>
+                            <div class="flex items-center gap-1.5">
+                                <button :disabled="sitemapPage <= 1" @click="loadSitemap(sitemapPage - 1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">上一页</button>
+                                <span class="font-mono text-slate-300">第 {{ sitemapPage }} / {{ Math.ceil(sitemapTotal / 50) || 1 }} 页</span>
+                                <button :disabled="sitemapPage * 50 >= sitemapTotal" @click="loadSitemap(sitemapPage + 1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">下一页</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ================= TAB 3: LIVE LOGS ================= -->
+                <div v-show="activeTab === 'logs'" class="space-y-3">
+                    <!-- Current crawling indicator -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs gap-3 flex-wrap sm:flex-nowrap">
+                        <div class="flex items-center gap-2 overflow-hidden flex-1 min-w-0">
+                            <span class="text-slate-400 flex-shrink-0">正在抓取:</span>
+                            <span class="font-mono text-sky-400 truncate">{{ liveProgress.current_url || activeTask.current_url || '队列等待中...' }}</span>
+                        </div>
+                        <div class="flex items-center gap-2.5 flex-shrink-0">
+                            <div v-if="activeTask.status === 'running'" class="px-2.5 py-1 rounded-md bg-emerald-950/70 border border-emerald-800/50 text-emerald-300 font-mono flex items-center gap-1.5 text-xs font-semibold">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                <span>速度: {{ activeTask.current_speed !== undefined ? activeTask.current_speed : (liveProgress.speed !== undefined ? liveProgress.speed : 0) }} 页/秒</span>
+                                <span class="text-slate-500 font-normal">| 均速: {{ activeTask.avg_speed !== undefined ? activeTask.avg_speed : (liveProgress.avg_speed !== undefined ? liveProgress.avg_speed : 0) }}</span>
+                            </div>
+                            <button @click="clearLogs" class="text-slate-400 hover:text-slate-200 px-2 py-1 bg-slate-800 rounded">清空终端</button>
+                            <label class="flex items-center gap-1 text-slate-400 cursor-pointer">
+                                <input type="checkbox" v-model="autoScrollLogs" class="rounded bg-slate-800 border-slate-700">
+                                <span>自动滚屏</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Terminal log screen -->
+                    <div ref="terminalRef" class="terminal-window rounded-xl p-4 h-[550px] overflow-y-auto font-mono text-xs space-y-1">
+                        <div v-if="logs.length === 0" class="text-slate-600 text-center py-20">暂无日志流，等待任务响应...</div>
+                        <div v-for="(l, idx) in logs" :key="idx" class="flex items-start gap-2 leading-relaxed">
+                            <span class="text-slate-600 flex-shrink-0">[{{ l.timestamp || l.created_at }}]</span>
+                            <span :class="getLogLevelClass(l.level)" class="font-bold flex-shrink-0">[{{ l.level }}]</span>
+                            <span class="text-slate-300 break-all">{{ l.message }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ================= TAB 4: ANALYTICS ================= -->
+                <div v-show="activeTab === 'analytics'" class="space-y-4">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <!-- Top 10 Root Domains -->
+                        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-md">
+                            <h3 class="font-bold text-sm text-slate-200 mb-3 flex items-center gap-2">
+                                <span>🏆 Top 10 外部顶级注册主域名</span>
+                            </h3>
+                            <div v-if="!domainStats.top_root_domains || domainStats.top_root_domains.length === 0" class="py-8 text-center text-slate-500 text-xs">
+                                暂无统计数据
+                            </div>
+                            <div v-else class="space-y-3 text-xs">
+                                <div v-for="r in domainStats.top_root_domains" :key="r.root_domain" class="space-y-1">
+                                    <div class="flex items-center justify-between font-mono">
+                                        <span class="font-bold text-sky-300">{{ r.root_domain }}</span>
+                                        <span class="text-slate-400">{{ r.total_occurrences }} 次 ({{ r.domain_count }} 个子域)</span>
+                                    </div>
+                                    <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                        <div class="bg-gradient-to-r from-sky-500 to-indigo-500 h-full rounded-full"
+                                             :style="{ width: Math.min(100, (r.total_occurrences / (domainStats.top_root_domains[0].total_occurrences || 1)) * 100) + '%' }"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Top 10 Specific Domains -->
+                        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-md">
+                            <h3 class="font-bold text-sm text-slate-200 mb-3 flex items-center gap-2">
+                                <span>🎯 出现最频繁的外部完整域名 (FQDN)</span>
+                            </h3>
+                            <div v-if="!domainStats.top_domains || domainStats.top_domains.length === 0" class="py-8 text-center text-slate-500 text-xs">
+                                暂无统计数据
+                            </div>
+                            <div v-else class="space-y-3 text-xs">
+                                <div v-for="d in domainStats.top_domains" :key="d.domain" class="space-y-1">
+                                    <div class="flex items-center justify-between font-mono gap-2">
+                                        <span class="font-bold text-emerald-300 truncate flex-1 min-w-0" :title="d.domain">{{ d.domain }}</span>
+                                        <span class="text-slate-400 flex-shrink-0 whitespace-nowrap">{{ d.occurrence_count }} 次</span>
+                                    </div>
+                                    <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                        <div class="bg-gradient-to-r from-emerald-500 to-teal-400 h-full rounded-full"
+                                             :style="{ width: Math.min(100, (d.occurrence_count / (domainStats.top_domains[0].occurrence_count || 1)) * 100) + '%' }"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= VIEW 3: GLOBAL EXTERNAL DOMAINS REPOSITORY ================= -->
+            <div v-if="currentView === 'global_domains'" class="space-y-6">
+                <!-- Banner Header -->
+                <div class="bg-gradient-to-r from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-800/30 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl">
+                    <div class="flex items-center gap-3.5">
+                        <div class="w-12 h-12 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-2xl shadow-lg shadow-indigo-500/20">
+                            🌐
+                        </div>
+                        <div>
+                            <h2 class="text-lg font-bold text-white flex items-center gap-2 flex-wrap">
+                                <span>全局外部域名聚合总库</span>
+                                <span class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 flex items-center gap-1">
+                                    <span>🛡️</span> IANA 国际官方根域名准入
+                                </span>
+                            </h2>
+                            <p class="text-xs text-slate-400 mt-1">自动汇聚全系统所有扫描任务发现的外部域名 • 跨任务公共服务依赖分析 • 全局去重与溯源</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="switchView('tasks')" class="text-xs px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1.5 font-medium">
+                            <span>📋 返回任务列表</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Summary Metric Cards -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-xs font-medium text-slate-400">全局去重外部域名</p>
+                            <p class="text-2xl font-bold text-sky-400 mt-1 font-mono">{{ globalDomainStats.total_unique_domains }}</p>
+                        </div>
+                        <div class="w-11 h-11 rounded-lg bg-sky-950/50 border border-sky-800/40 flex items-center justify-center text-xl text-sky-400">🌐</div>
+                    </div>
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-xs font-medium text-slate-400">涵盖主根域名 (Root)</p>
+                            <p class="text-2xl font-bold text-indigo-400 mt-1 font-mono">{{ globalDomainStats.unique_root_domains }}</p>
+                        </div>
+                        <div class="w-11 h-11 rounded-lg bg-indigo-950/50 border border-indigo-800/40 flex items-center justify-center text-xl text-indigo-400">🏛️</div>
+                    </div>
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-xs font-medium text-slate-400">多任务公共服务 (≥2任务)</p>
+                            <p class="text-2xl font-bold text-purple-400 mt-1 font-mono">{{ globalDomainStats.shared_domains_count }}</p>
+                        </div>
+                        <div class="w-11 h-11 rounded-lg bg-purple-950/50 border border-purple-800/40 flex items-center justify-center text-xl text-purple-400">🌟</div>
+                    </div>
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-xs font-medium text-slate-400">全库累计引用总频次</p>
+                            <p class="text-2xl font-bold text-amber-400 mt-1 font-mono">{{ globalDomainStats.total_occurrences }}</p>
+                        </div>
+                        <div class="w-11 h-11 rounded-lg bg-amber-950/50 border border-amber-800/40 flex items-center justify-center text-xl text-amber-400">📊</div>
+                    </div>
+                </div>
+
+                <!-- Filters & Global Export Bar -->
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col xl:flex-row xl:items-center justify-between gap-3 text-xs shadow-md">
+                    <div class="flex items-center gap-2.5 flex-wrap flex-1">
+                        <input v-model="globalDomainFilters.search" @input="loadGlobalDomains(1)" placeholder="搜索域名或主根域名..."
+                               class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-56 sm:w-64 lg:w-72 font-mono">
+                        
+                        <select v-model="globalDomainFilters.sourceType" @change="loadGlobalDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                            <option value="">全部来源特征</option>
+                            <option value="link">包含超链接引用 (a/img/script)</option>
+                            <option value="text">包含纯文本/代码内嵌</option>
+                        </select>
+
+                        <select v-model="globalDomainFilters.minTasks" @change="loadGlobalDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                            <option value="">全部任务范围</option>
+                            <option value="2">跨多任务公共服务 (覆盖 ≥ 2 个任务)</option>
+                        </select>
+
+                        <select v-model="globalDomainFilters.sortBy" @change="loadGlobalDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                            <option value="total_occurrences">按全局总频次降序</option>
+                            <option value="task_count">按覆盖任务数降序</option>
+                            <option value="domain">按外部域名名称排序</option>
+                            <option value="last_seen_at">按最近发现时间排序</option>
+                        </select>
+
+                        <button @click="loadGlobalDomains(1)" class="px-3 py-1.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 rounded-lg font-medium transition whitespace-nowrap">
+                            筛选
+                        </button>
+                    </div>
+
+                    <!-- Global Export Buttons -->
+                    <div class="flex items-center gap-2 flex-wrap flex-shrink-0">
+                        <a :href="`/api/global-domains/export/txt?search=${encodeURIComponent(globalDomainFilters.search || '')}&min_tasks=${globalDomainFilters.minTasks || ''}`" download class="px-3 py-1.5 bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                            📥 导出 TXT
+                        </a>
+                        <a :href="`/api/global-domains/export/csv?search=${encodeURIComponent(globalDomainFilters.search || '')}&min_tasks=${globalDomainFilters.minTasks || ''}`" download class="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                            📊 导出 CSV
+                        </a>
+                        <a :href="`/api/global-domains/export/json?search=${encodeURIComponent(globalDomainFilters.search || '')}&min_tasks=${globalDomainFilters.minTasks || ''}`" download class="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                            📦 导出 JSON
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Aggregated Domains Table -->
+                <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-md">
+                    <div v-if="globalDomainsList.length === 0" class="py-16 text-center text-slate-500 text-xs">
+                        <p class="text-4xl mb-2">🌐</p>
+                        <p>未找到符合条件的全局外部域名</p>
+                    </div>
+                    <div v-else class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-950/60 text-slate-400 border-b border-slate-800 font-medium whitespace-nowrap">
+                                <tr>
+                                    <th class="py-3 px-4 min-w-[200px]">外部域名 (FQDN)</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">主根域名 (Root)</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">全局出现总频次</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">覆盖扫描任务</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">来源特征</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">首次 / 最近发现时间</th>
+                                    <th class="py-3 px-4 text-right whitespace-nowrap">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800/60 text-slate-300">
+                                <tr v-for="d in globalDomainsList" :key="d.domain" class="hover:bg-slate-800/40 transition">
+                                    <td class="py-3 px-4 font-mono font-bold text-sky-300">
+                                        <div class="flex items-center gap-1.5 whitespace-nowrap">
+                                            <span>🔗</span>
+                                            <span>{{ d.domain }}</span>
+                                        </div>
+                                        <div v-if="d.sample_page_url" class="text-[11px] text-slate-500 font-normal truncate max-w-xs md:max-w-sm lg:max-w-md xl:max-w-lg 2xl:max-w-2xl mt-0.5" :title="d.sample_page_url">
+                                            例: {{ d.sample_page_url }}
+                                        </div>
+                                    </td>
+                                    <td class="py-3 px-4 font-mono text-slate-400 whitespace-nowrap">
+                                        <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/60">{{ d.root_domain }}</span>
+                                    </td>
+                                    <td class="py-3 px-4 font-mono whitespace-nowrap">
+                                        <span class="px-2.5 py-1 rounded-full bg-slate-800 text-amber-300 font-semibold">{{ d.total_occurrences }} 次</span>
+                                    </td>
+                                    <td class="py-3 px-4 whitespace-nowrap">
+                                        <button @click="openAssociatedTasksModal(d.domain)" class="px-2.5 py-1 rounded-md text-xs font-medium transition flex items-center gap-1.5 border"
+                                                :class="d.task_count >= 2 ? 'bg-purple-950/80 border-purple-800/60 text-purple-300 hover:bg-purple-900/60' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'">
+                                            <span>📑 {{ d.task_count }} 个任务</span>
+                                            <span v-if="d.task_count >= 2" class="px-1 py-0.2 rounded bg-purple-900 text-purple-200 text-[10px]">跨任务</span>
+                                        </button>
+                                    </td>
+                                    <td class="py-3 px-4 space-x-1 whitespace-nowrap">
+                                        <span v-if="d.has_link" class="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800/40 text-emerald-400 text-xs">
+                                            链接属性
+                                        </span>
+                                        <span v-if="d.has_text" class="px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800/40 text-cyan-400 text-xs">
+                                            文本/代码
+                                        </span>
+                                    </td>
+                                    <td class="py-3 px-4 text-slate-400 font-mono text-[11px] whitespace-nowrap">
+                                        <div>首见: {{ d.first_seen_at }}</div>
+                                        <div class="text-slate-500">最近: {{ d.last_seen_at }}</div>
+                                    </td>
+                                    <td class="py-3 px-4 text-right whitespace-nowrap">
+                                        <button @click="openAssociatedTasksModal(d.domain)" class="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 rounded transition font-medium">
+                                            🔍 任务与证据
+                                        </button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div class="p-3.5 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                        <span>全库共 <strong class="text-white">{{ globalDomainsTotal }}</strong> 个聚合外部域名</span>
+                        <div class="flex items-center gap-1.5">
+                            <button :disabled="globalDomainPage <= 1" @click="loadGlobalDomains(globalDomainPage - 1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">上一页</button>
+                            <span class="font-mono text-slate-300">第 {{ globalDomainPage }} / {{ Math.ceil(globalDomainsTotal / 50) || 1 }} 页</span>
+                            <button :disabled="globalDomainPage * 50 >= globalDomainsTotal" @click="loadGlobalDomains(globalDomainPage + 1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">下一页</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- ================= MODAL: CREATE TASK ================= -->
+        <div v-if="showCreateModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl lg:max-w-2xl w-full p-6 shadow-2xl space-y-5">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <h3 class="text-base font-bold text-white flex items-center gap-2">
+                        <span>✨ 新建全深度网站扫描任务</span>
+                    </h3>
+                    <button @click="showCreateModal = false" class="text-slate-400 hover:text-white text-lg">✕</button>
+                </div>
+
+                <div class="space-y-4 text-xs">
+                    <div>
+                        <label class="block font-semibold text-slate-300 mb-1">任务名称 <span class="text-rose-400">*</span></label>
+                        <input v-model="newTask.name" placeholder="例如：某官网外部依赖与全站地图扫描"
+                               class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-sky-500">
+                    </div>
+
+                    <div>
+                        <label class="block font-semibold text-slate-300 mb-1">目标站点 URL <span class="text-rose-400">*</span></label>
+                        <input v-model="newTask.target_url" placeholder="https://example.com 或 https://blog.example.com"
+                               class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-sky-500">
+                        <p class="text-slate-500 mt-1">支持自动解析协议头，爬虫将从此起始页开始全深度遍历。</p>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block font-semibold text-slate-300 mb-1">最大爬取深度</label>
+                            <input v-model.number="newTask.config.max_depth" type="number" min="0" placeholder="0为不限"
+                                   class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-sky-500">
+                            <span class="text-slate-500 text-[10px]">默认10，0表示不限制深度</span>
+                        </div>
+                        <div>
+                            <label class="block font-semibold text-slate-300 mb-1">最大页面上限</label>
+                            <input v-model.number="newTask.config.max_pages" type="number" min="0" placeholder="0为不限"
+                                   class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-sky-500">
+                            <span class="text-slate-500 text-[10px]">默认1000页，0为不限制</span>
+                        </div>
+                        <div>
+                            <label class="block font-semibold text-slate-300 mb-1">并发工作协程</label>
+                            <input v-model.number="newTask.config.concurrency" type="number" min="1" max="50"
+                                   class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-sky-500">
+                            <span class="text-slate-500 text-[10px]">推荐 10 - 20</span>
+                        </div>
+                    </div>
+
+                    <!-- Advanced Settings Toggle -->
+                    <div class="pt-2">
+                        <button type="button" @click="showAdvanced = !showAdvanced" class="text-sky-400 hover:text-sky-300 flex items-center gap-1 font-semibold">
+                            <span>{{ showAdvanced ? '▼ 收起高级设置' : '▶ 展开高级设置 (外部域名识别范围、探测策略等)' }}</span>
+                        </button>
+                    </div>
+
+                    <div v-show="showAdvanced" class="space-y-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+                        <div>
+                            <label class="block font-semibold text-slate-300 mb-1">本站判定范围 (Scope Mode)</label>
+                            <select v-model="newTask.config.scope_mode" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none">
+                                <option value="root_domain">【推荐】主根域名模式：所有 *.example.com 均为本站内链，其余全部识别为外部域名</option>
+                                <option value="exact_host">精确主机名模式：仅当前主机名 (如 blog.example.com) 算本站，其他子域也算外部域名</option>
+                            </select>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input type="checkbox" v-model="newTask.config.detect_sitemap" class="rounded bg-slate-900 border-slate-700 text-sky-500">
+                                <span>自动探测 robots.txt 和 sitemap.xml</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input type="checkbox" v-model="newTask.config.ignore_ssl" class="rounded bg-slate-900 border-slate-700 text-sky-500">
+                                <span>忽略 SSL 证书错误 (支持内网/测试站点)</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input type="checkbox" v-model="newTask.config.extract_assets" class="rounded bg-slate-900 border-slate-700 text-sky-500">
+                                <span>提取 HTML 标签属性域名 (img/script/css)</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input type="checkbox" v-model="newTask.config.scan_asset_content" class="rounded bg-slate-900 border-slate-700 text-sky-500">
+                                <span class="text-amber-300 font-semibold">在线访问扫描 JS/CSS 文件内部代码 (与页面一样直接网络读取，不保存本地)</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input type="checkbox" v-model="newTask.config.extract_text" class="rounded bg-slate-900 border-slate-700 text-sky-500">
+                                <span>提取非链接纯文本/注释/代码中的裸域名</span>
+                            </label>
+                        </div>
+
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-slate-400 mb-1">请求间隔延迟 (秒)</label>
+                                <input v-model.number="newTask.config.request_delay" type="number" step="0.1" min="0"
+                                       class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 font-mono">
+                            </div>
+                            <div>
+                                <label class="block text-slate-400 mb-1">请求超时时间 (秒)</label>
+                                <input v-model.number="newTask.config.timeout" type="number" min="1"
+                                       class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 font-mono">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-end gap-2.5 border-t border-slate-800 pt-3">
+                    <button @click="showCreateModal = false" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs">取消</button>
+                    <button @click="submitCreateTask" class="px-5 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-white font-semibold text-xs shadow-md shadow-sky-500/20">创建并开始</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= MODAL: BATCH IMPORT TASKS ================= -->
+        <div v-if="showBatchModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl lg:max-w-3xl xl:max-w-4xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div>
+                        <h3 class="text-base font-bold text-white flex items-center gap-2">
+                            <span>📑 批量导入创建扫描任务</span>
+                        </h3>
+                        <p class="text-xs text-slate-400 mt-0.5">支持多行文本粘贴与 .txt / .csv 文件一键解析导入</p>
+                    </div>
+                    <button @click="showBatchModal = false" class="text-slate-400 hover:text-white text-lg">✕</button>
+                </div>
+
+                <div class="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+                    <!-- Import Area -->
+                    <div>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="font-semibold text-slate-300">
+                                待测站点 URL 列表 <span class="text-rose-400">*</span>
+                            </label>
+                            <div class="flex items-center gap-2">
+                                <input type="file" ref="batchFileInput" @change="handleBatchFileUpload" accept=".txt,.csv" class="hidden">
+                                <button type="button" @click="$refs.batchFileInput.click()" class="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 transition flex items-center gap-1 font-medium">
+                                    📁 上传 .txt / .csv 文件
+                                </button>
+                                <button v-if="batchForm.rawUrls.trim()" type="button" @click="batchForm.rawUrls = ''" class="text-xs px-2 py-1 text-slate-400 hover:text-rose-400">
+                                    清空
+                                </button>
+                            </div>
+                        </div>
+
+                        <textarea v-model="batchForm.rawUrls" rows="6"
+                                  placeholder="在此直接粘贴多个待测站点，一行一个 URL，例如：&#10;https://example.com&#10;http://demo.example.org/path&#10;api.service.cn&#10;# 允许以 # 注释，系统自动去重与补全 https:// 协议头"
+                                  class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-slate-200 font-mono text-xs focus:outline-none focus:border-sky-500"></textarea>
+                        
+                        <div class="flex items-center justify-between mt-1.5">
+                            <div class="flex items-center gap-2">
+                                <span :class="parsedBatchUrls.length > 0 ? 'text-emerald-400 bg-emerald-950/60 border-emerald-800/40' : 'text-slate-500 bg-slate-950 border-slate-800'"
+                                      class="px-2.5 py-0.5 rounded-full border font-mono text-[11px] inline-flex items-center gap-1">
+                                    <span v-if="parsedBatchUrls.length > 0">✓</span>
+                                    已识别 <strong class="text-white">{{ parsedBatchUrls.length }}</strong> 个有效待测站点
+                                </span>
+                            </div>
+                            <span class="text-slate-500 text-[11px]">自动去除重复、无效及空行</span>
+                        </div>
+                    </div>
+
+                    <!-- Naming Strategy -->
+                    <div class="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800 space-y-3">
+                        <label class="block font-semibold text-slate-300">任务命名策略</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer p-2 rounded-lg border"
+                                   :class="batchForm.nameTemplate === 'domain' ? 'border-sky-500 bg-sky-950/20 text-white' : 'border-slate-800 bg-slate-900/40'">
+                                <input type="radio" value="domain" v-model="batchForm.nameTemplate" class="text-sky-500">
+                                <div>
+                                    <div class="font-medium">按站点域名命名</div>
+                                    <div class="text-[10px] text-slate-400">例: example.com_扫描</div>
+                                </div>
+                            </label>
+
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer p-2 rounded-lg border"
+                                   :class="batchForm.nameTemplate === 'custom_prefix' ? 'border-sky-500 bg-sky-950/20 text-white' : 'border-slate-800 bg-slate-900/40'">
+                                <input type="radio" value="custom_prefix" v-model="batchForm.nameTemplate" class="text-sky-500">
+                                <div>
+                                    <div class="font-medium">自定义统一前缀</div>
+                                    <div class="text-[10px] text-slate-400">例: [前缀]_example.com</div>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div v-if="batchForm.nameTemplate === 'custom_prefix'">
+                            <label class="block text-slate-400 mb-1">自定义前缀文本</label>
+                            <input v-model="batchForm.namePrefix" placeholder="例如：2026安全巡检 或 业务线A"
+                                   class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 focus:outline-none focus:border-sky-500 font-mono">
+                        </div>
+                    </div>
+
+                    <!-- Crawler Configuration (collapsible) -->
+                    <div>
+                        <button type="button" @click="showBatchAdvanced = !showBatchAdvanced" class="text-sky-400 hover:text-sky-300 flex items-center gap-1 font-semibold">
+                            <span>{{ showBatchAdvanced ? '▼ 收起统一爬虫配置' : '▶ 展开统一爬虫配置 (并发、深度、深度JS/CSS扫描等)' }}</span>
+                        </button>
+                    </div>
+
+                    <div v-show="showBatchAdvanced" class="space-y-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+                        <div class="grid grid-cols-3 gap-3">
+                            <div>
+                                <label class="block font-semibold text-slate-300 mb-1">最大爬取深度</label>
+                                <input v-model.number="batchForm.config.max_depth" type="number" min="0" placeholder="0为不限"
+                                       class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 font-mono focus:outline-none focus:border-sky-500">
+                                <span class="text-slate-500 text-[10px]">默认10，0不限</span>
+                            </div>
+                            <div>
+                                <label class="block font-semibold text-slate-300 mb-1">页面上限/任务</label>
+                                <input v-model.number="batchForm.config.max_pages" type="number" min="0" placeholder="0为不限"
+                                       class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 font-mono focus:outline-none focus:border-sky-500">
+                                <span class="text-slate-500 text-[10px]">默认1000页</span>
+                            </div>
+                            <div>
+                                <label class="block font-semibold text-slate-300 mb-1">单任务并发协程</label>
+                                <input v-model.number="batchForm.config.concurrency" type="number" min="1" max="50"
+                                       class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 font-mono focus:outline-none focus:border-sky-500">
+                                <span class="text-slate-500 text-[10px]">推荐 10 - 20</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block font-semibold text-slate-300 mb-1">本站判定范围 (Scope Mode)</label>
+                            <select v-model="batchForm.config.scope_mode" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 focus:outline-none">
+                                <option value="root_domain">主根域名模式：所有 *.example.com 均为本站内链，其余识别为外部域名</option>
+                                <option value="exact_host">精确主机名模式：仅当前主机名算本站，子域也算外部域名</option>
+                            </select>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2.5">
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input type="checkbox" v-model="batchForm.config.scan_asset_content" class="rounded bg-slate-900 border-slate-700 text-sky-500">
+                                <span class="text-amber-300 font-semibold">在线访问扫描 JS/CSS 文件内容 (不保存本地)</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input type="checkbox" v-model="batchForm.config.extract_assets" class="rounded bg-slate-900 border-slate-700 text-sky-500">
+                                <span>提取 HTML 标签属性外链</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input type="checkbox" v-model="batchForm.config.extract_text" class="rounded bg-slate-900 border-slate-700 text-sky-500">
+                                <span>提取非链接文本中的裸域名</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input type="checkbox" v-model="batchForm.config.ignore_ssl" class="rounded bg-slate-900 border-slate-700 text-sky-500">
+                                <span>忽略 SSL 证书错误</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Auto-start Option -->
+                    <div class="bg-indigo-950/40 border border-indigo-800/40 p-3 rounded-xl flex items-center justify-between">
+                        <label class="flex items-center gap-2.5 text-indigo-200 font-semibold cursor-pointer">
+                            <input type="checkbox" v-model="batchForm.autoStart" class="rounded bg-slate-900 border-indigo-700 text-sky-500">
+                            <span>创建完成后立即自动启动全部任务</span>
+                        </label>
+                        <span class="text-[11px] text-slate-400">开启后各任务将同时开始扫描</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between border-t border-slate-800 pt-3">
+                    <span class="text-xs text-slate-400">
+                        将批量创建 <strong class="text-sky-400 font-mono">{{ parsedBatchUrls.length }}</strong> 个任务
+                    </span>
+                    <div class="flex items-center gap-2.5">
+                        <button @click="showBatchModal = false" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs">取消</button>
+                        <button :disabled="parsedBatchUrls.length === 0 || isBatchSubmitting"
+                                @click="submitBatchImport"
+                                class="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white font-semibold text-xs shadow-md shadow-indigo-600/20 flex items-center gap-1.5">
+                            <span v-if="isBatchSubmitting" class="animate-spin">🌀</span>
+                            <span>{{ isBatchSubmitting ? '正在批量创建...' : `立即批量创建 (${parsedBatchUrls.length})` }}</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= MODAL: DOMAIN EVIDENCE & CONTEXT ================= -->
+        <div v-if="showEvidenceModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl lg:max-w-4xl xl:max-w-5xl w-full p-6 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3 gap-3">
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-base font-bold text-white flex items-center gap-2">
+                            <span>🔍 域名 / 子域名溯源与证据明细</span>
+                        </h3>
+                        <p class="text-xs text-sky-400 font-mono mt-0.5 truncate" :title="selectedDomainForEvidence">{{ selectedDomainForEvidence }}</p>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <a v-if="activeTask && selectedDomainForEvidence"
+                           :href="`/api/tasks/${activeTask.id}/domains/${encodeURIComponent(selectedDomainForEvidence)}/occurrences/export/csv`"
+                           download
+                           class="px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs transition flex items-center gap-1.5 font-medium shadow-sm"
+                           title="导出当前域名在任务中的所有证据为 CSV 表格">
+                            📊 导出 CSV
+                        </a>
+                        <a v-if="activeTask && selectedDomainForEvidence"
+                           :href="`/api/tasks/${activeTask.id}/domains/${encodeURIComponent(selectedDomainForEvidence)}/occurrences/export/json`"
+                           download
+                           class="px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs transition flex items-center gap-1.5 font-medium shadow-sm"
+                           title="导出当前域名在任务中的所有证据为 JSON 数据">
+                            📦 导出 JSON
+                        </a>
+                        <button @click="showEvidenceModal = false" class="text-slate-400 hover:text-white text-lg px-1.5 py-0.5 rounded hover:bg-slate-800 transition ml-1">✕</button>
+                    </div>
+                </div>
+
+                <div class="flex-1 overflow-y-auto space-y-3 pr-1 text-xs">
+                    <div v-if="domainOccurrences.length === 0" class="py-12 text-center text-slate-500">
+                        正在加载或暂未记录证据片段...
+                    </div>
+                    <div v-for="(occ, idx) in domainOccurrences" :key="idx"
+                         class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span :class="occ.source_type.startsWith('link') ? 'bg-emerald-950 text-emerald-300 border-emerald-800/40' : 'bg-cyan-950 text-cyan-300 border-cyan-800/40'"
+                                  class="px-2 py-0.5 rounded border font-mono text-[11px]">
+                                {{ occ.source_type }}
+                            </span>
+                            <span class="text-slate-500 font-mono">{{ occ.created_at }}</span>
+                        </div>
+                        <div>
+                            <span class="text-slate-400">发现于页面: </span>
+                            <a :href="occ.page_url" target="_blank" class="font-mono text-sky-400 hover:underline break-all">{{ occ.page_url }}</a>
+                        </div>
+                        <div>
+                            <span class="text-slate-400">匹配原始串: </span>
+                            <code class="bg-slate-900 px-1.5 py-0.5 rounded text-amber-300 font-mono break-all">{{ occ.raw_match }}</code>
+                        </div>
+                        <div class="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 text-slate-300 font-mono text-[11px] break-all">
+                            <span class="text-slate-500 select-none">// 上下文片段:</span><br>
+                            {{ occ.context_snippet }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between border-t border-slate-800 pt-3">
+                    <div class="flex items-center gap-2 text-xs text-slate-400">
+                        <span>当前展示 {{ domainOccurrences.length }} 条证据记录</span>
+                        <template v-if="activeTask && selectedDomainForEvidence">
+                            <span class="text-slate-600">|</span>
+                            <a :href="`/api/tasks/${activeTask.id}/domains/${encodeURIComponent(selectedDomainForEvidence)}/occurrences/export/csv`"
+                               download class="text-emerald-400 hover:underline flex items-center gap-1">
+                                📊 导出完整 CSV
+                            </a>
+                            <span class="text-slate-600">|</span>
+                            <a :href="`/api/tasks/${activeTask.id}/domains/${encodeURIComponent(selectedDomainForEvidence)}/occurrences/export/json`"
+                               download class="text-indigo-400 hover:underline flex items-center gap-1">
+                                📦 导出 JSON
+                            </a>
+                        </template>
+                    </div>
+                    <button @click="showEvidenceModal = false" class="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= MODAL: ASSOCIATED TASKS & TRACEABILITY ================= -->
+        <div v-if="showAssociatedTasksModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl lg:max-w-5xl xl:max-w-6xl w-full p-6 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3 gap-3">
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-base font-bold text-white flex items-center gap-2">
+                            <span>🌐 外部域名关联任务与代码证据溯源</span>
+                        </h3>
+                        <p class="text-xs text-sky-400 font-mono mt-0.5 flex items-center gap-2 truncate">
+                            <span class="font-bold">{{ selectedDomainForTasks }}</span>
+                            <span v-if="associatedTasksList.length > 0" class="text-slate-400 font-sans">
+                                (关联 {{ associatedTasksList.length }} 个扫描任务)
+                            </span>
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <a v-if="selectedDomainForTasks"
+                           :href="`/api/global-domains/${encodeURIComponent(selectedDomainForTasks)}/tasks/export/csv`"
+                           download
+                           class="px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs transition flex items-center gap-1.5 font-medium shadow-sm"
+                           title="导出该外部域名的全量关联任务与各任务代码证据片段为 CSV 表格">
+                            📊 导出关联任务与证据 CSV
+                        </a>
+                        <a v-if="selectedDomainForTasks"
+                           :href="`/api/global-domains/${encodeURIComponent(selectedDomainForTasks)}/tasks/export/json`"
+                           download
+                           class="px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs transition flex items-center gap-1.5 font-medium shadow-sm"
+                           title="导出该外部域名的全量关联任务与各任务代码证据片段为 JSON 数据">
+                            📦 导出 JSON
+                        </a>
+                        <button @click="showAssociatedTasksModal = false" class="text-slate-400 hover:text-white text-lg px-1.5 py-0.5 rounded hover:bg-slate-800 transition ml-1">✕</button>
+                    </div>
+                </div>
+
+                <div class="flex-1 overflow-y-auto space-y-3 pr-1 text-xs">
+                    <div v-if="isLoadingAssociatedTasks" class="py-12 text-center text-slate-400 flex flex-col items-center gap-2">
+                        <span class="animate-spin text-2xl">🌀</span>
+                        <span>正在检索全库关联任务与溯源证据...</span>
+                    </div>
+                    <div v-else-if="associatedTasksList.length === 0" class="py-12 text-center text-slate-500">
+                        暂无该域名的关联任务数据
+                    </div>
+                    <div v-else v-for="t in associatedTasksList" :key="t.task_id"
+                         class="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3 hover:border-slate-700 transition">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-900 pb-2.5">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <span class="font-bold text-slate-200 text-sm">#{{ t.task_id }} {{ t.task_name }}</span>
+                                    <span :class="getStatusBadgeClass(t.task_status)" class="px-2 py-0.5 rounded text-[11px] font-semibold border">
+                                        {{ getStatusLabel(t.task_status) }}
+                                    </span>
+                                </div>
+                                <div class="text-slate-500 font-mono text-[11px] mt-0.5">
+                                    目标站点: <a :href="t.target_url" target="_blank" class="text-sky-400/80 hover:underline">{{ t.target_url }}</a>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-amber-300 font-mono font-semibold">
+                                    出现 {{ t.occurrence_count }} 次
+                                </span>
+                                <button @click="jumpToTaskDetail(t.task_id)" class="px-3 py-1 bg-indigo-600/30 hover:bg-indigo-600/60 text-indigo-200 border border-indigo-500/40 rounded-lg transition font-medium">
+                                    进入此任务 ➔
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Characteristics & Sample Page -->
+                        <div class="flex items-center gap-3 text-[11px] flex-wrap">
+                            <span class="text-slate-400">特征属性:</span>
+                            <span v-if="t.has_link" class="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800/40 text-emerald-400 text-xs">
+                                链接属性
+                            </span>
+                            <span v-if="t.has_text" class="px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800/40 text-cyan-400 text-xs">
+                                文本/代码
+                            </span>
+                            <span v-if="t.sample_page_url" class="text-slate-400 truncate max-w-xs sm:max-w-md md:max-w-lg lg:max-w-2xl xl:max-w-4xl font-mono" :title="t.sample_page_url">
+                                示例来源: {{ t.sample_page_url }}
+                            </span>
+                        </div>
+
+                        <!-- Occurrences Snippets within this Task -->
+                        <div v-if="t.occurrences && t.occurrences.length > 0" class="space-y-2 pt-1">
+                            <div class="text-slate-400 font-semibold text-[11px] flex items-center gap-1.5">
+                                <span>🔎 代码/文本匹配证据片段 (最多展示前3条):</span>
+                            </div>
+                            <div v-for="(occ, oIdx) in t.occurrences" :key="oIdx"
+                                 class="bg-slate-900/90 border border-slate-800/80 rounded-lg p-2.5 space-y-1 font-mono text-[11px]">
+                                <div class="flex items-center justify-between text-slate-400">
+                                    <span :class="occ.source_type && occ.source_type.startsWith('link') ? 'text-emerald-400' : 'text-cyan-400'">
+                                        [{{ occ.source_type }}]
+                                    </span>
+                                    <span class="text-slate-500">{{ occ.created_at }}</span>
+                                </div>
+                                <div class="text-slate-300 break-all">
+                                    <span class="text-slate-500">页面: </span>{{ occ.page_url }}
+                                </div>
+                                <div class="text-amber-300 break-all">
+                                    <span class="text-slate-500">匹配串: </span>{{ occ.raw_match }}
+                                </div>
+                                <div v-if="occ.context_snippet" class="text-slate-400 bg-slate-950 p-2 rounded border border-slate-800/60 break-all mt-1">
+                                    {{ occ.context_snippet }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between border-t border-slate-800 pt-3">
+                    <div class="flex items-center gap-3 text-xs text-slate-400 flex-wrap">
+                        <span>共关联 {{ associatedTasksList.length }} 个任务</span>
+                        <template v-if="selectedDomainForTasks">
+                            <span class="text-slate-600">|</span>
+                            <a :href="`/api/global-domains/${encodeURIComponent(selectedDomainForTasks)}/tasks/export/csv`"
+                               download class="text-emerald-400 hover:underline flex items-center gap-1">
+                                📊 导出完整证据 CSV
+                            </a>
+                            <span class="text-slate-600">|</span>
+                            <a :href="`/api/global-domains/${encodeURIComponent(selectedDomainForTasks)}/tasks/export/json`"
+                               download class="text-indigo-400 hover:underline flex items-center gap-1">
+                                📦 导出 JSON
+                            </a>
+                        </template>
+                        <span class="text-slate-500 hidden sm:inline">（提示: 点击“进入此任务”可切换并查看任务详情）</span>
+                    </div>
+                    <button @click="showAssociatedTasksModal = false" class="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition">关闭</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Application Script -->
+    <script src="/static/app.js"></script>
+</body>
+</html>
