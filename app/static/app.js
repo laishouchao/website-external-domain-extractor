@@ -73,6 +73,8 @@ const app = createApp({
         const domainFilters = ref({
             search: '',
             sourceType: '',
+            riskLevel: '',
+            verifyStatus: '',
             sortBy: 'occurrence_count'
         });
         const domainStats = ref({
@@ -80,8 +82,67 @@ const app = createApp({
             unique_root_domains: 0,
             link_domains: 0,
             text_domains: 0,
+            risk_stats: { critical: 0, high: 0, medium: 0, low: 0, safe: 0, pending: 0, total_risk: 0 },
+            verify_stats: { unverified: 0, verified_clean: 0, verified_failed: 0, error: 0 },
             top_root_domains: [],
             top_domains: []
+        });
+
+        // Multi-select for External Domains
+        const selectedDomains = ref([]);
+        const isAllDomainsSelected = computed(() => {
+            if (!domainsList.value.length) return false;
+            return domainsList.value.every(d => selectedDomains.value.includes(d.domain));
+        });
+
+        const toggleSelectAllDomains = () => {
+            if (isAllDomainsSelected.value) {
+                selectedDomains.value = [];
+            } else {
+                selectedDomains.value = domainsList.value.map(d => d.domain);
+            }
+        };
+
+        // Manual Risk Tagging Modal State
+        const showTagModal = ref(false);
+        const tagTargetDomain = ref(null);
+        const tagForm = ref({
+            risk_level: 'high',
+            tags: [],
+            customTag: '',
+            remark: '',
+            sync_to_global: false,
+            match_type: 'root'
+        });
+
+        // Targeted Verification Modal State & Loading Maps
+        const showVerifyModal = ref(false);
+        const verifyVerdict = ref(null);
+        const verifyTargetDomain = ref('');
+        const verifyingMap = ref({});
+        const batchVerifying = ref(false);
+        const evaluatingRules = ref(false);
+
+        // Global Threat Intelligence Profiles Modal State
+        const showRiskProfilesModal = ref(false);
+        const riskProfiles = ref([]);
+        const riskProfilesTotal = ref(0);
+        const riskProfilePage = ref(1);
+        const riskProfileSearch = ref('');
+        const riskProfileLevelFilter = ref('');
+        const showAddProfileForm = ref(false);
+        const showBatchImportProfilesForm = ref(false);
+        const batchImportProfilesText = ref('');
+        const isImportingProfiles = ref(false);
+        const isSyncingHistory = ref(false);
+        const newProfile = ref({
+            domain: '',
+            match_type: 'root',
+            risk_level: 'high',
+            category: '',
+            tags: '',
+            remark: '',
+            sync_to_history: true
         });
 
         // Discovered Subdomains Data & Filters
@@ -107,6 +168,8 @@ const app = createApp({
         const globalDomainFilters = ref({
             search: '',
             sourceType: '',
+            riskLevel: '',
+            verifyStatus: '',
             minTasks: '',
             sortBy: 'total_occurrences'
         });
@@ -589,6 +652,8 @@ const app = createApp({
             if (domainFilters.value.sourceType === 'link') params.append('has_link', 1);
             if (domainFilters.value.sourceType === 'text') params.append('has_text', 1);
             if (domainFilters.value.sourceType === 'asset') params.append('source_type', 'asset');
+            if (domainFilters.value.riskLevel) params.append('risk_level', domainFilters.value.riskLevel);
+            if (domainFilters.value.verifyStatus) params.append('verify_status', domainFilters.value.verifyStatus);
 
             try {
                 const res = await fetch(`/api/tasks/${activeTask.value.id}/domains?${params.toString()}`);
@@ -815,6 +880,12 @@ const app = createApp({
             if (globalDomainFilters.value.sourceType === 'text') {
                 params.append('has_text', 1);
             }
+            if (globalDomainFilters.value.riskLevel) {
+                params.append('risk_level', globalDomainFilters.value.riskLevel);
+            }
+            if (globalDomainFilters.value.verifyStatus) {
+                params.append('verify_status', globalDomainFilters.value.verifyStatus);
+            }
             if (globalDomainFilters.value.minTasks) {
                 params.append('min_tasks', globalDomainFilters.value.minTasks);
             }
@@ -880,6 +951,374 @@ const app = createApp({
             }
         };
 
+        // Filter helpers
+        const filterByRisk = (level) => {
+            domainFilters.value.riskLevel = domainFilters.value.riskLevel === level ? '' : level;
+            loadDomains(1);
+        };
+
+        const filterByVerify = (status) => {
+            domainFilters.value.verifyStatus = domainFilters.value.verifyStatus === status ? '' : status;
+            loadDomains(1);
+        };
+
+        const filterGlobalByRisk = (level) => {
+            globalDomainFilters.value.riskLevel = globalDomainFilters.value.riskLevel === level ? '' : level;
+            loadGlobalDomains(1);
+        };
+
+        const filterGlobalByVerify = (status) => {
+            globalDomainFilters.value.verifyStatus = globalDomainFilters.value.verifyStatus === status ? '' : status;
+            loadGlobalDomains(1);
+        };
+
+        // Open Risk Tagging Modal
+        const openTagModal = (domainItem) => {
+            tagTargetDomain.value = domainItem;
+            tagForm.value = {
+                risk_level: domainItem.risk_level && domainItem.risk_level !== 'pending' ? domainItem.risk_level : 'high',
+                tags: Array.isArray(domainItem.risk_tags) ? [...domainItem.risk_tags] : [],
+                customTag: '',
+                remark: domainItem.risk_remark || '',
+                sync_to_global: false,
+                match_type: 'root'
+            };
+            showTagModal.value = true;
+        };
+
+        const toggleTag = (tagName) => {
+            const idx = tagForm.value.tags.indexOf(tagName);
+            if (idx >= 0) {
+                tagForm.value.tags.splice(idx, 1);
+            } else {
+                tagForm.value.tags.push(tagName);
+            }
+        };
+
+        const addCustomTag = () => {
+            const t = (tagForm.value.customTag || '').trim();
+            if (t && !tagForm.value.tags.includes(t)) {
+                tagForm.value.tags.push(t);
+                tagForm.value.customTag = '';
+            }
+        };
+
+        const saveTagForm = async () => {
+            if (!activeTask.value || !tagTargetDomain.value) return;
+            try {
+                const res = await fetch(`/api/tasks/${activeTask.value.id}/domains/${encodeURIComponent(tagTargetDomain.value.domain)}/risk`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        risk_level: tagForm.value.risk_level,
+                        tags: tagForm.value.tags,
+                        remark: tagForm.value.remark,
+                        sync_to_global: tagForm.value.sync_to_global,
+                        match_type: tagForm.value.match_type
+                    })
+                });
+                if (res.ok) {
+                    showTagModal.value = false;
+                    await loadDomains(domainPage.value);
+                    await loadDomainStats();
+                    if (tagForm.value.sync_to_global) {
+                        await loadGlobalDomainStats();
+                    }
+                } else {
+                    const err = await res.json();
+                    alert("保存研判结果失败: " + (err.detail || "未知错误"));
+                }
+            } catch (e) {
+                alert("保存研判异常: " + e.message);
+            }
+        };
+
+        // Targeted Remediation Verification
+        const verifySingleDomain = async (domain) => {
+            if (!activeTask.value) return;
+            verifyingMap.value[domain] = true;
+            try {
+                const res = await fetch(`/api/tasks/${activeTask.value.id}/domains/${encodeURIComponent(domain)}/verify`, {
+                    method: 'POST'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const item = domainsList.value.find(d => d.domain === domain);
+                    if (item && data.verdict) {
+                        item.verify_status = data.verdict.verify_status;
+                        item.verify_time = data.verdict.verify_time;
+                        item.verify_detail = JSON.stringify(data.verdict);
+                    }
+                    await loadDomainStats();
+                    showVerifyReport(data.verdict, domain);
+                } else {
+                    const err = await res.json();
+                    alert("复测请求失败: " + (err.detail || "未知错误"));
+                }
+            } catch (e) {
+                alert("复测请求异常: " + e.message);
+            } finally {
+                verifyingMap.value[domain] = false;
+            }
+        };
+
+        const showVerifyReport = (domainItemOrVerdict, domainName = '') => {
+            if (!domainItemOrVerdict) return;
+            if (domainItemOrVerdict.details && domainItemOrVerdict.summary) {
+                verifyVerdict.value = domainItemOrVerdict;
+                verifyTargetDomain.value = domainName;
+            } else {
+                verifyTargetDomain.value = domainItemOrVerdict.domain;
+                try {
+                    verifyVerdict.value = typeof domainItemOrVerdict.verify_detail === 'string'
+                        ? JSON.parse(domainItemOrVerdict.verify_detail)
+                        : domainItemOrVerdict.verify_detail;
+                } catch (e) {
+                    verifyVerdict.value = {
+                        verify_status: domainItemOrVerdict.verify_status,
+                        verify_time: domainItemOrVerdict.verify_time,
+                        summary: "暂无更详细复测快照",
+                        details: []
+                    };
+                }
+            }
+            showVerifyModal.value = true;
+        };
+
+        const batchVerifySelected = async () => {
+            if (!activeTask.value || !selectedDomains.value.length) return;
+            batchVerifying.value = true;
+            try {
+                const res = await fetch(`/api/tasks/${activeTask.value.id}/domains/batch-verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ domains: selectedDomains.value })
+                });
+                if (res.ok) {
+                    await loadDomains(domainPage.value);
+                    await loadDomainStats();
+                    alert(`批量复测完成！已复测 ${selectedDomains.value.length} 个域名。`);
+                } else {
+                    alert("批量复测失败");
+                }
+            } catch (e) {
+                alert("批量复测异常: " + e.message);
+            } finally {
+                batchVerifying.value = false;
+            }
+        };
+
+        const batchSetRisk = async (level) => {
+            if (!activeTask.value || !selectedDomains.value.length) return;
+            try {
+                const res = await fetch(`/api/tasks/${activeTask.value.id}/domains/batch-risk`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        domains: selectedDomains.value,
+                        risk_level: level,
+                        tags: [],
+                        remark: '批量人工标记'
+                    })
+                });
+                if (res.ok) {
+                    selectedDomains.value = [];
+                    await loadDomains(domainPage.value);
+                    await loadDomainStats();
+                } else {
+                    alert("批量标记失败");
+                }
+            } catch (e) {
+                alert("批量标记异常: " + e.message);
+            }
+        };
+
+        const evaluateRulesForTask = async (taskId) => {
+            if (!taskId) return;
+            evaluatingRules.value = true;
+            try {
+                const res = await fetch(`/api/tasks/${taskId}/domains/evaluate-rules`, {
+                    method: 'POST'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(`初筛完成！已对全站 ${data.result.total} 个外部域名进行智能评估，重新评定 ${data.result.evaluated_count} 个未人工认定的域名。`);
+                    await loadDomains(1);
+                    await loadDomainStats();
+                } else {
+                    alert("评估失败");
+                }
+            } catch (e) {
+                alert("评估异常: " + e.message);
+            } finally {
+                evaluatingRules.value = false;
+            }
+        };
+
+        // Threat Intel Management Functions
+        const openRiskProfilesModal = () => {
+            showRiskProfilesModal.value = true;
+            loadRiskProfiles(1);
+        };
+
+        const loadRiskProfiles = async (page = 1) => {
+            riskProfilePage.value = page;
+            const offset = (page - 1) * 50;
+            const params = new URLSearchParams({ limit: 50, offset });
+            if (riskProfileSearch.value) params.append('search', riskProfileSearch.value.trim());
+            if (riskProfileLevelFilter.value) params.append('risk_level', riskProfileLevelFilter.value);
+
+            try {
+                const res = await fetch(`/api/risk-profiles?${params.toString()}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    riskProfiles.value = data.profiles || [];
+                    riskProfilesTotal.value = data.total || 0;
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        };
+
+        const submitAddProfile = async () => {
+            if (!newProfile.value.domain.trim()) {
+                alert("请输入域名或根域名");
+                return;
+            }
+            try {
+                const tagsArr = newProfile.value.tags
+                    ? newProfile.value.tags.split(/[,，\s]+/).filter(Boolean)
+                    : [];
+                const res = await fetch('/api/risk-profiles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        domain: newProfile.value.domain.trim(),
+                        match_type: newProfile.value.match_type,
+                        risk_level: newProfile.value.risk_level,
+                        category: newProfile.value.category,
+                        tags: tagsArr,
+                        remark: newProfile.value.remark,
+                        sync_to_history: newProfile.value.sync_to_history
+                    })
+                });
+                if (res.ok) {
+                    showAddProfileForm.value = false;
+                    newProfile.value = {
+                        domain: '',
+                        match_type: 'root',
+                        risk_level: 'high',
+                        category: '',
+                        tags: '',
+                        remark: '',
+                        sync_to_history: true
+                    };
+                    await loadRiskProfiles(1);
+                    if (activeTask.value) {
+                        await loadDomains(1);
+                        await loadDomainStats();
+                    }
+                    await loadGlobalDomainStats();
+                } else {
+                    const err = await res.json();
+                    alert("添加失败: " + (err.detail || "未知错误"));
+                }
+            } catch (e) {
+                alert("添加请求异常: " + e.message);
+            }
+        };
+
+        const deleteRiskProfile = async (id, domain) => {
+            if (!confirm(`确定要从风险情报库中删除规则 [${domain}] 吗？`)) return;
+            try {
+                const res = await fetch(`/api/risk-profiles/${id}`, { method: 'DELETE' });
+                if (res.ok) {
+                    await loadRiskProfiles(riskProfilePage.value);
+                } else {
+                    alert("删除失败");
+                }
+            } catch (e) {
+                alert("删除异常: " + e.message);
+            }
+        };
+
+        const submitBatchImportProfiles = async () => {
+            const raw = (batchImportProfilesText.value || '').trim();
+            if (!raw) {
+                alert("请输入要导入的域名列表");
+                return;
+            }
+            isImportingProfiles.value = true;
+            try {
+                const lines = raw.split('\n');
+                const items = [];
+                for (const line of lines) {
+                    const l = line.trim();
+                    if (!l || l.startsWith('#')) continue;
+                    const parts = l.split(/[,，\t]+/);
+                    const dom = parts[0].trim();
+                    const level = parts[1] ? parts[1].trim() : 'high';
+                    const category = parts[2] ? parts[2].trim() : '';
+                    const remark = parts[3] ? parts[3].trim() : '批量导入情报';
+                    items.push({
+                        domain: dom,
+                        match_type: 'root',
+                        risk_level: level,
+                        category: category,
+                        tags: category ? [category] : [],
+                        remark: remark,
+                        sync_to_history: true
+                    });
+                }
+
+                const res = await fetch('/api/risk-profiles/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items, sync_to_history: true })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(`导入成功！共导入 ${data.imported_count} 条风险根域名情报并完成历史回溯！`);
+                    batchImportProfilesText.value = '';
+                    showBatchImportProfilesForm.value = false;
+                    await loadRiskProfiles(1);
+                    if (activeTask.value) {
+                        await loadDomains(1);
+                        await loadDomainStats();
+                    }
+                    await loadGlobalDomainStats();
+                } else {
+                    alert("批量导入失败");
+                }
+            } catch (e) {
+                alert("导入异常: " + e.message);
+            } finally {
+                isImportingProfiles.value = false;
+            }
+        };
+
+        const syncAllProfilesToHistory = async () => {
+            isSyncingHistory.value = true;
+            try {
+                const res = await fetch('/api/risk-profiles/sync-history', { method: 'POST' });
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(`历史全量回溯完成！比对 ${data.result.profile_count} 条情报规则，已在全库中更新标记 ${data.result.updated_domains} 条外部域名。`);
+                    if (activeTask.value) {
+                        await loadDomains(domainPage.value);
+                        await loadDomainStats();
+                    }
+                    await loadGlobalDomainStats();
+                } else {
+                    alert("回溯失败");
+                }
+            } catch (e) {
+                alert("回溯异常: " + e.message);
+            } finally {
+                isSyncingHistory.value = false;
+            }
+        };
+
         // Lifecycle Hooks
         onMounted(async () => {
             await loadTasks();
@@ -926,7 +1365,6 @@ const app = createApp({
             }, 4000);
         });
 
-
         onUnmounted(() => {
             if (tasksPollInterval) clearInterval(tasksPollInterval);
             closeEventSource();
@@ -968,6 +1406,49 @@ const app = createApp({
             domainPage,
             domainFilters,
             domainStats,
+            selectedDomains,
+            isAllDomainsSelected,
+            toggleSelectAllDomains,
+            showTagModal,
+            tagTargetDomain,
+            tagForm,
+            openTagModal,
+            toggleTag,
+            addCustomTag,
+            saveTagForm,
+            showVerifyModal,
+            verifyVerdict,
+            verifyTargetDomain,
+            verifyingMap,
+            batchVerifying,
+            evaluatingRules,
+            verifySingleDomain,
+            showVerifyReport,
+            batchVerifySelected,
+            batchSetRisk,
+            evaluateRulesForTask,
+            filterByRisk,
+            filterByVerify,
+            filterGlobalByRisk,
+            filterGlobalByVerify,
+            showRiskProfilesModal,
+            riskProfiles,
+            riskProfilesTotal,
+            riskProfilePage,
+            riskProfileSearch,
+            riskProfileLevelFilter,
+            showAddProfileForm,
+            showBatchImportProfilesForm,
+            batchImportProfilesText,
+            isImportingProfiles,
+            isSyncingHistory,
+            newProfile,
+            openRiskProfilesModal,
+            loadRiskProfiles,
+            submitAddProfile,
+            deleteRiskProfile,
+            submitBatchImportProfiles,
+            syncAllProfilesToHistory,
             globalDomainsList,
             globalDomainsTotal,
             globalDomainPage,

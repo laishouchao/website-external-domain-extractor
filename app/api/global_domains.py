@@ -14,8 +14,10 @@ def list_global_domains_api(
     root_domain: Optional[str] = Query(None, description="按主根域名筛选"),
     has_link: Optional[int] = Query(None, description="是否来自链接 (1 或 0)"),
     has_text: Optional[int] = Query(None, description="是否来自非链接文本 (1 或 0)"),
+    risk_level: Optional[str] = Query(None, description="按风险级别筛选 (critical, high, medium, low, safe, pending, risk_only)"),
+    verify_status: Optional[str] = Query(None, description="按闭环复测状态筛选 (unverified, verified_clean, verified_failed, error)"),
     min_tasks: Optional[int] = Query(None, description="最小关联任务数 (例如 2 表示仅看跨多个任务的公共域名)"),
-    sort_by: str = Query("total_occurrences", description="排序字段 (total_occurrences, task_count, domain, root_domain, first_seen_at, last_seen_at)"),
+    sort_by: str = Query("total_occurrences", description="排序字段 (total_occurrences, task_count, domain, root_domain, risk_level, first_seen_at, last_seen_at)"),
     order: str = Query("DESC", description="排序方式 ASC/DESC"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0)
@@ -26,6 +28,8 @@ def list_global_domains_api(
         root_domain=root_domain,
         has_link=has_link,
         has_text=has_text,
+        risk_level=risk_level,
+        verify_status=verify_status,
         min_tasks=min_tasks,
         sort_by=sort_by,
         order=order,
@@ -176,12 +180,14 @@ def export_global_domains_txt(
 def export_global_domains_csv(
     search: Optional[str] = Query(None),
     root_domain: Optional[str] = Query(None),
+    risk_level: Optional[str] = Query(None),
     min_tasks: Optional[int] = Query(None)
 ):
-    """Export all aggregated external domains to CSV with rich metadata."""
+    """Export all aggregated external domains to CSV with rich risk and evidence metadata."""
     domains = crud.get_global_domains_for_export(
         search=search,
         root_domain=root_domain,
+        risk_level=risk_level,
         min_tasks=min_tasks
     )
     output = io.StringIO()
@@ -189,6 +195,11 @@ def export_global_domains_csv(
     writer.writerow([
         "外部域名(FQDN)",
         "主根域名(Root)",
+        "风险等级",
+        "风险标签",
+        "研判说明",
+        "闭环验证状态",
+        "验证时间",
         "全局出现总频次",
         "覆盖任务数",
         "包含链接属性",
@@ -199,14 +210,37 @@ def export_global_domains_csv(
         "关联任务概要"
     ])
 
+    risk_label_map = {
+        "critical": "严重(Critical)",
+        "high": "高危(High)",
+        "medium": "中危(Medium)",
+        "low": "低危(Low)",
+        "safe": "安全(Safe)",
+        "pending": "待研判(Pending)"
+    }
+    verify_label_map = {
+        "verified_clean": "已修复/已清除",
+        "verified_failed": "未修复/仍存留",
+        "unverified": "未复测",
+        "error": "复测异常"
+    }
+
     for d in domains:
         tasks_summary_str = " | ".join([
             f"{t['task_name']} (ID:{t['task_id']}, {t['occurrence_count']}次)"
             for t in d.get("associated_tasks", [])
         ])
+        raw_tags = d.get("risk_tags", [])
+        tags_str = " / ".join(raw_tags) if isinstance(raw_tags, list) else str(raw_tags)
+
         writer.writerow([
             d["domain"],
             d["root_domain"],
+            risk_label_map.get(d.get("risk_level", ""), d.get("risk_level", "")),
+            tags_str,
+            d.get("risk_remark", ""),
+            verify_label_map.get(d.get("verify_status", ""), d.get("verify_status", "")),
+            d.get("verify_time", ""),
             d["total_occurrences"],
             d["task_count"],
             "是" if d["has_link"] else "否",
@@ -230,12 +264,14 @@ def export_global_domains_csv(
 def export_global_domains_json(
     search: Optional[str] = Query(None),
     root_domain: Optional[str] = Query(None),
+    risk_level: Optional[str] = Query(None),
     min_tasks: Optional[int] = Query(None)
 ):
     """Export all aggregated external domains to JSON with full nested structure."""
     domains = crud.get_global_domains_for_export(
         search=search,
         root_domain=root_domain,
+        risk_level=risk_level,
         min_tasks=min_tasks
     )
     stats = crud.get_global_domains_stats()

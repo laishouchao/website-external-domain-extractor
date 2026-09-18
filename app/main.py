@@ -11,6 +11,7 @@ from app.api.sitemap import router as sitemap_router
 from app.api.domains import router as domains_router
 from app.api.subdomains import router as subdomains_router
 from app.api.global_domains import router as global_domains_router
+from app.api.risk_profiles import router as risk_profiles_router
 from app.api.events import router as events_router
 
 @asynccontextmanager
@@ -42,6 +43,7 @@ app.include_router(sitemap_router)
 app.include_router(domains_router)
 app.include_router(subdomains_router)
 app.include_router(global_domains_router)
+app.include_router(risk_profiles_router)
 app.include_router(events_router)
 
 # Static files directory

@@ -96,9 +96,50 @@ def init_db():
             has_link INTEGER DEFAULT 0,
             has_text INTEGER DEFAULT 0,
             sample_page_url TEXT DEFAULT '',
+            risk_level TEXT DEFAULT 'pending',
+            risk_tags TEXT DEFAULT '[]',
+            risk_remark TEXT DEFAULT '',
+            risk_source TEXT DEFAULT '',
+            verify_status TEXT DEFAULT 'unverified',
+            verify_time TEXT DEFAULT NULL,
+            verify_detail TEXT DEFAULT '',
             created_at TEXT NOT NULL,
             FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
             UNIQUE(task_id, domain)
+        );
+        """)
+
+        # Migration: ensure risk and verification columns exist on external_domains
+        cursor.execute("PRAGMA table_info(external_domains);")
+        ext_cols = [r[1] for r in cursor.fetchall()]
+        if "risk_level" not in ext_cols:
+            cursor.execute("ALTER TABLE external_domains ADD COLUMN risk_level TEXT DEFAULT 'pending';")
+        if "risk_tags" not in ext_cols:
+            cursor.execute("ALTER TABLE external_domains ADD COLUMN risk_tags TEXT DEFAULT '[]';")
+        if "risk_remark" not in ext_cols:
+            cursor.execute("ALTER TABLE external_domains ADD COLUMN risk_remark TEXT DEFAULT '';")
+        if "risk_source" not in ext_cols:
+            cursor.execute("ALTER TABLE external_domains ADD COLUMN risk_source TEXT DEFAULT '';")
+        if "verify_status" not in ext_cols:
+            cursor.execute("ALTER TABLE external_domains ADD COLUMN verify_status TEXT DEFAULT 'unverified';")
+        if "verify_time" not in ext_cols:
+            cursor.execute("ALTER TABLE external_domains ADD COLUMN verify_time TEXT DEFAULT NULL;")
+        if "verify_detail" not in ext_cols:
+            cursor.execute("ALTER TABLE external_domains ADD COLUMN verify_detail TEXT DEFAULT '';")
+
+        # Global domain risk intelligence & profile rules table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS domain_risk_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            domain TEXT NOT NULL UNIQUE,
+            match_type TEXT NOT NULL DEFAULT 'root',
+            risk_level TEXT NOT NULL,
+            category TEXT DEFAULT '',
+            tags TEXT DEFAULT '[]',
+            source TEXT DEFAULT 'manual',
+            remark TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         );
         """)
 
@@ -163,3 +204,7 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_only_domain ON external_domains(domain);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_only_root ON external_domains(root_domain);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_subdomains_only_sub ON discovered_subdomains(subdomain);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_risk ON external_domains(task_id, risk_level);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_verify ON external_domains(task_id, verify_status);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_profile_domain ON domain_risk_profiles(domain);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_profile_level ON domain_risk_profiles(risk_level);")

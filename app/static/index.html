@@ -64,6 +64,10 @@
                         <span>全局外部域名总库</span>
                         <span v-if="globalDomainStats.total_unique_domains" class="ml-1 px-1.5 py-0.2 rounded-full bg-indigo-950 text-indigo-300 font-mono text-[10px] border border-indigo-800/50">{{ globalDomainStats.total_unique_domains }}</span>
                     </button>
+                    <button @click="openRiskProfilesModal" class="px-3.5 py-1.5 rounded-lg text-xs transition flex items-center gap-1.5 text-rose-300 hover:text-rose-200 hover:bg-rose-950/50 border border-rose-900/40">
+                        <span>🛡️</span>
+                        <span>风险情报库</span>
+                    </button>
                 </nav>
 
                 <div class="flex items-center space-x-2.5">
@@ -72,6 +76,9 @@
                     </button>
                     <button v-if="currentView === 'detail'" @click="switchView('global_domains')" class="text-xs px-3 py-1.5 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 transition flex items-center gap-1.5 border border-indigo-800/60">
                         <span>🌐 全局外部域名总库</span>
+                    </button>
+                    <button @click="openRiskProfilesModal" class="text-xs font-semibold px-3 py-2 rounded-lg bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 transition flex items-center gap-1.5 shadow-sm">
+                        <span>🛡️</span> 风险情报库
                     </button>
                     <button @click="openBatchModal" class="text-xs font-semibold px-3.5 py-2 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 transition flex items-center gap-1.5">
                         <span>📑</span> 批量导入任务
@@ -416,12 +423,57 @@
 
                 <!-- ================= TAB 1: EXTERNAL DOMAINS ================= -->
                 <div v-show="activeTab === 'domains'" class="space-y-4">
+                    <!-- Risk Posture Summary Bar -->
+                    <div v-if="domainStats.risk_stats" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
+                        <div @click="filterByRisk('')" class="cursor-pointer bg-slate-900/80 hover:bg-slate-850 border rounded-xl p-2.5 flex items-center justify-between transition" :class="!domainFilters.riskLevel ? 'border-sky-500/60 bg-sky-950/20' : 'border-slate-800'">
+                            <span class="text-slate-400">全部外部域名</span>
+                            <span class="font-bold text-white font-mono">{{ domainStats.total_unique_domains || 0 }}</span>
+                        </div>
+                        <div @click="filterByRisk('risk_only')" class="cursor-pointer bg-rose-950/20 hover:bg-rose-950/40 border rounded-xl p-2.5 flex items-center justify-between transition" :class="domainFilters.riskLevel === 'risk_only' ? 'border-rose-500 bg-rose-950/50 shadow-sm shadow-rose-950/50' : 'border-rose-900/40'">
+                            <span class="text-rose-400 font-medium flex items-center gap-1"><span>⚠️</span> 疑似涉险域</span>
+                            <span class="font-bold text-rose-400 font-mono">{{ domainStats.risk_stats.total_risk || 0 }}</span>
+                        </div>
+                        <div @click="filterByRisk('high')" class="cursor-pointer bg-slate-900/80 hover:bg-slate-850 border rounded-xl p-2.5 flex items-center justify-between transition" :class="domainFilters.riskLevel === 'high' ? 'border-rose-500 bg-rose-950/30' : 'border-slate-800'">
+                            <span class="text-rose-400">🔴 高危 / 严重</span>
+                            <span class="font-bold text-rose-300 font-mono">{{ (domainStats.risk_stats.critical || 0) + (domainStats.risk_stats.high || 0) }}</span>
+                        </div>
+                        <div @click="filterByRisk('medium')" class="cursor-pointer bg-slate-900/80 hover:bg-slate-850 border rounded-xl p-2.5 flex items-center justify-between transition" :class="domainFilters.riskLevel === 'medium' ? 'border-amber-500 bg-amber-950/30' : 'border-slate-800'">
+                            <span class="text-amber-400">🟡 中危 / 可疑</span>
+                            <span class="font-bold text-amber-300 font-mono">{{ domainStats.risk_stats.medium || 0 }}</span>
+                        </div>
+                        <div @click="filterByRisk('safe')" class="cursor-pointer bg-slate-900/80 hover:bg-slate-850 border rounded-xl p-2.5 flex items-center justify-between transition" :class="domainFilters.riskLevel === 'safe' ? 'border-emerald-500 bg-emerald-950/30' : 'border-slate-800'">
+                            <span class="text-emerald-400">🟢 安全白名单</span>
+                            <span class="font-bold text-emerald-300 font-mono">{{ domainStats.risk_stats.safe || 0 }}</span>
+                        </div>
+                        <div @click="filterByVerify('verified_clean')" class="cursor-pointer bg-slate-900/80 hover:bg-slate-850 border rounded-xl p-2.5 flex items-center justify-between transition" :class="domainFilters.verifyStatus === 'verified_clean' ? 'border-teal-500 bg-teal-950/30' : 'border-slate-800'">
+                            <span class="text-teal-400 flex items-center gap-1"><span>🛡️</span> 已复测清除</span>
+                            <span class="font-bold text-teal-300 font-mono">{{ domainStats.verify_stats ? domainStats.verify_stats.verified_clean : 0 }}</span>
+                        </div>
+                    </div>
+
                     <!-- Filters & Export Bar -->
                     <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col xl:flex-row xl:items-center justify-between gap-3 text-xs">
                         <div class="flex items-center gap-2.5 flex-wrap flex-1">
                             <input v-model="domainFilters.search" @input="loadDomains(1)" placeholder="搜索域名或主根域名..."
-                                   class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 w-56 sm:w-64 lg:w-72 font-mono">
+                                   class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 w-48 sm:w-56 lg:w-60 font-mono">
                             
+                            <select v-model="domainFilters.riskLevel" @change="loadDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                                <option value="">全部风险等级</option>
+                                <option value="risk_only">仅看涉险域 (高危/中危)</option>
+                                <option value="high">🔴 高危 / 严重</option>
+                                <option value="medium">🟡 中危 / 可疑</option>
+                                <option value="low">🔵 低危 / 关注</option>
+                                <option value="safe">🟢 安全白名单</option>
+                                <option value="pending">⚪ 待研判</option>
+                            </select>
+
+                            <select v-model="domainFilters.verifyStatus" @change="loadDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                                <option value="">所有复测状态</option>
+                                <option value="verified_clean">🟢 已验证修复</option>
+                                <option value="verified_failed">🔴 未修复/仍存留</option>
+                                <option value="unverified">⚪ 未复测</option>
+                            </select>
+
                             <select v-model="domainFilters.sourceType" @change="loadDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
                                 <option value="">所有提取来源</option>
                                 <option value="link">包含链接属性 (a/img/script)</option>
@@ -431,6 +483,7 @@
 
                             <select v-model="domainFilters.sortBy" @change="loadDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
                                 <option value="occurrence_count">按出现频次降序</option>
+                                <option value="risk_level">按风险等级排序</option>
                                 <option value="domain">按域名名称排序</option>
                             </select>
 
@@ -440,25 +493,30 @@
 
                             <!-- IANA Root Zone Badge -->
                             <span class="px-2.5 py-1 bg-emerald-950/60 border border-emerald-800/50 text-emerald-400 rounded-lg text-[11px] font-medium inline-flex items-center gap-1 cursor-help whitespace-nowrap" title="所有提取域名均已通过国际 IANA Root Zone 官方注册根域名库 (1438+ TLDs) 严格准入验证">
-                                <span>🛡️</span> IANA 国际官方根域名准入
+                                <span>🛡️</span> IANA 根域准入
                             </span>
                         </div>
 
                         <!-- Actions & Export Dropdown -->
                         <div class="flex items-center gap-2 flex-wrap flex-shrink-0">
+                            <button @click="evaluateRulesForTask(activeTask.id)" :disabled="evaluatingRules" class="px-3 py-1.5 bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/40 rounded-lg transition flex items-center gap-1 font-medium disabled:opacity-50 whitespace-nowrap" title="根据内置启发式规则与预置风险根域名情报重新初筛打标">
+                                <span v-if="evaluatingRules" class="animate-spin">⏳</span>
+                                <span v-else>⚡</span>
+                                <span>智能规则初筛</span>
+                            </button>
                             <button @click="cleanDomains(activeTask.id)" :disabled="cleaningDomains" class="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 rounded-lg transition flex items-center gap-1 font-medium disabled:opacity-50 whitespace-nowrap" title="基于 IANA 官方注册根域名库与代码语法深度清洗，一键剔除伪域名">
                                 <span v-if="cleaningDomains" class="animate-spin">⏳</span>
                                 <span v-else>🧹</span>
                                 <span>清洗伪域名</span>
                             </button>
                             <a :href="`/api/tasks/${activeTask.id}/export/txt`" download class="px-3 py-1.5 bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
-                                📥 导出 TXT
+                                📥 TXT
                             </a>
                             <a :href="`/api/tasks/${activeTask.id}/export/csv`" download class="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
-                                📊 导出 CSV
+                                📊 CSV
                             </a>
                             <a :href="`/api/tasks/${activeTask.id}/export/json`" download class="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
-                                📦 导出 JSON
+                                📦 JSON
                             </a>
                         </div>
                     </div>
@@ -473,16 +531,24 @@
                             <table class="w-full text-left text-xs">
                                 <thead class="bg-slate-950/60 text-slate-400 border-b border-slate-800 font-medium whitespace-nowrap">
                                     <tr>
+                                        <th class="py-3 px-3 w-8 text-center">
+                                            <input type="checkbox" :checked="isAllDomainsSelected" @change="toggleSelectAllDomains" class="rounded bg-slate-950 border-slate-700 text-sky-500 focus:ring-0">
+                                        </th>
                                         <th class="py-3 px-4">提取外部域名 (FQDN)</th>
                                         <th class="py-3 px-4">主根域名 (Root)</th>
+                                        <th class="py-3 px-4">风险评级 & 标签</th>
+                                        <th class="py-3 px-4">闭环复测</th>
+                                        <th class="py-3 px-4">出现频次</th>
                                         <th class="py-3 px-4">来源特征</th>
-                                        <th class="py-3 px-4">页面出现频次</th>
                                         <th class="py-3 px-4">示例来源页面</th>
-                                        <th class="py-3 px-4 text-right">溯源与证据</th>
+                                        <th class="py-3 px-4 text-right">操作</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-800/60 text-slate-300">
                                     <tr v-for="d in domainsList" :key="d.id" class="hover:bg-slate-800/40 transition">
+                                        <td class="py-2.5 px-3 text-center">
+                                            <input type="checkbox" :value="d.domain" v-model="selectedDomains" class="rounded bg-slate-950 border-slate-700 text-sky-500 focus:ring-0">
+                                        </td>
                                         <td class="py-2.5 px-4 font-mono font-bold text-sky-300 whitespace-nowrap flex items-center gap-1.5">
                                             <span>🔗</span>
                                             <span>{{ d.domain }}</span>
@@ -490,6 +556,65 @@
                                         <td class="py-2.5 px-4 font-mono text-slate-400 whitespace-nowrap">
                                             <span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{{ d.root_domain }}</span>
                                         </td>
+                                        
+                                        <!-- Risk Level & Tags Column -->
+                                        <td class="py-2.5 px-4 whitespace-nowrap">
+                                            <div class="flex flex-col gap-1">
+                                                <div class="flex items-center gap-1.5">
+                                                    <span v-if="d.risk_level === 'critical' || d.risk_level === 'high'" class="px-2 py-0.5 rounded bg-rose-950 border border-rose-800 text-rose-300 text-xs font-bold inline-flex items-center gap-1 shadow-sm">
+                                                        <span>🔴</span> 高危
+                                                    </span>
+                                                    <span v-else-if="d.risk_level === 'medium'" class="px-2 py-0.5 rounded bg-amber-950 border border-amber-800 text-amber-300 text-xs font-semibold inline-flex items-center gap-1">
+                                                        <span>🟡</span> 中危
+                                                    </span>
+                                                    <span v-else-if="d.risk_level === 'low'" class="px-2 py-0.5 rounded bg-sky-950 border border-sky-800 text-sky-300 text-xs inline-flex items-center gap-1">
+                                                        <span>🔵</span> 低危
+                                                    </span>
+                                                    <span v-else-if="d.risk_level === 'safe'" class="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800 text-emerald-300 text-xs font-medium inline-flex items-center gap-1">
+                                                        <span>🟢</span> 安全
+                                                    </span>
+                                                    <span v-else class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-400 text-xs inline-flex items-center gap-1">
+                                                        <span>⚪</span> 待研判
+                                                    </span>
+                                                    <button @click="openTagModal(d)" class="text-slate-500 hover:text-slate-200 text-xs ml-1" title="修改研判等级与说明">✏️</button>
+                                                </div>
+                                                <div v-if="d.risk_tags && d.risk_tags.length" class="flex flex-wrap gap-1 max-w-xs">
+                                                    <span v-for="tag in d.risk_tags" :key="tag" class="px-1.5 py-0.2 rounded bg-slate-800/80 text-[10px] text-slate-300 border border-slate-700/50" :title="d.risk_remark">
+                                                        {{ tag }}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </td>
+
+                                        <!-- Verification / Remediation Column -->
+                                        <td class="py-2.5 px-4 whitespace-nowrap">
+                                            <div v-if="d.verify_status === 'verified_clean'" class="flex items-center gap-1.5">
+                                                <button @click="showVerifyReport(d)" class="px-2 py-0.5 rounded bg-teal-950 border border-teal-800 text-teal-300 text-xs font-medium hover:bg-teal-900 transition flex items-center gap-1" title="点击查看复测详细报告">
+                                                    <span>🟢 已修复</span>
+                                                    <span class="text-[10px] text-teal-400">报告 ↗</span>
+                                                </button>
+                                                <button @click="verifySingleDomain(d.domain)" :disabled="verifyingMap[d.domain]" class="text-slate-500 hover:text-slate-300 text-[11px]" title="重新复测">🔄</button>
+                                            </div>
+                                            <div v-else-if="d.verify_status === 'verified_failed'" class="flex items-center gap-1.5">
+                                                <button @click="showVerifyReport(d)" class="px-2 py-0.5 rounded bg-rose-950 border border-rose-800 text-rose-300 text-xs font-bold hover:bg-rose-900 transition flex items-center gap-1" title="点击查看存留代码证据">
+                                                    <span>🔴 未修复</span>
+                                                    <span class="text-[10px] text-rose-400">存留 ↗</span>
+                                                </button>
+                                                <button @click="verifySingleDomain(d.domain)" :disabled="verifyingMap[d.domain]" class="text-slate-500 hover:text-slate-300 text-[11px]" title="重新复测">🔄</button>
+                                            </div>
+                                            <div v-else>
+                                                <button @click="verifySingleDomain(d.domain)" :disabled="verifyingMap[d.domain]" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded transition font-medium text-xs flex items-center gap-1">
+                                                    <span v-if="verifyingMap[d.domain]" class="animate-spin">⏳</span>
+                                                    <span v-else>🔍</span>
+                                                    <span>验证修复</span>
+                                                </button>
+                                            </div>
+                                        </td>
+
+                                        <td class="py-2.5 px-4 font-mono whitespace-nowrap">
+                                            <span class="px-2 py-0.5 rounded-full bg-slate-800 text-amber-300 font-semibold">{{ d.occurrence_count }} 次</span>
+                                        </td>
+
                                         <td class="py-2.5 px-4 space-x-1 whitespace-nowrap">
                                             <span v-if="d.has_link" class="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800/40 text-emerald-400 text-xs">
                                                 链接属性
@@ -502,15 +627,15 @@
                                             </span>
                                         </td>
 
-                                        <td class="py-2.5 px-4 font-mono whitespace-nowrap">
-                                            <span class="px-2 py-0.5 rounded-full bg-slate-800 text-amber-300 font-semibold">{{ d.occurrence_count }} 次</span>
-                                        </td>
                                         <td class="py-2.5 px-4 max-w-xs md:max-w-sm lg:max-w-md xl:max-w-lg 2xl:max-w-2xl truncate text-slate-400 font-mono" :title="d.sample_page_url">
                                             {{ d.sample_page_url }}
                                         </td>
-                                        <td class="py-2.5 px-4 text-right whitespace-nowrap">
-                                            <button @click="openEvidenceModal(d.domain)" class="px-2.5 py-1 bg-slate-800 hover:bg-sky-950 hover:text-sky-300 border border-slate-700 hover:border-sky-800 rounded transition font-medium">
-                                                🔍 查看证据
+                                        <td class="py-2.5 px-4 text-right whitespace-nowrap space-x-1">
+                                            <button @click="openTagModal(d)" class="px-2.5 py-1 bg-slate-800 hover:bg-purple-950 hover:text-purple-300 border border-slate-700 hover:border-purple-800 rounded transition font-medium text-xs">
+                                                🏷️ 研判
+                                            </button>
+                                            <button @click="openEvidenceModal(d.domain)" class="px-2.5 py-1 bg-slate-800 hover:bg-sky-950 hover:text-sky-300 border border-slate-700 hover:border-sky-800 rounded transition font-medium text-xs">
+                                                🔍 证据
                                             </button>
                                         </td>
                                     </tr>
@@ -527,6 +652,32 @@
                                 <button :disabled="domainPage * 50 >= domainsTotal" @click="loadDomains(domainPage + 1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">下一页</button>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Floating Batch Action Bar for External Domains -->
+                    <div v-if="selectedDomains.length > 0" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-40 bg-slate-900/95 backdrop-blur-md border border-sky-500/60 rounded-2xl px-6 py-3 shadow-2xl flex items-center gap-3 text-xs">
+                        <span class="font-semibold text-white whitespace-nowrap">已选 <span class="text-sky-400 font-mono">{{ selectedDomains.length }}</span> 个域名</span>
+                        <div class="h-4 w-px bg-slate-700"></div>
+                        <button @click="batchVerifySelected" :disabled="batchVerifying" class="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white font-medium rounded-lg transition flex items-center gap-1 shadow whitespace-nowrap">
+                            <span v-if="batchVerifying" class="animate-spin">⏳</span>
+                            <span v-else>🔍</span>
+                            <span>批量验证修复</span>
+                        </button>
+                        <button @click="batchSetRisk('high')" class="px-3 py-1.5 bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 rounded-lg transition font-medium whitespace-nowrap">
+                            🔴 标为高危
+                        </button>
+                        <button @click="batchSetRisk('medium')" class="px-3 py-1.5 bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 border border-amber-500/40 rounded-lg transition font-medium whitespace-nowrap">
+                            🟡 标为中危
+                        </button>
+                        <button @click="batchSetRisk('safe')" class="px-3 py-1.5 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-lg transition font-medium whitespace-nowrap">
+                            🟢 标为安全
+                        </button>
+                        <button @click="batchSetRisk('pending')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg transition whitespace-nowrap">
+                            ⚪ 待研判
+                        </button>
+                        <button @click="selectedDomains = []" class="text-slate-400 hover:text-white underline ml-2 whitespace-nowrap">
+                            取消
+                        </button>
                     </div>
                 </div>
 
@@ -876,12 +1027,73 @@
                     </div>
                 </div>
 
+                <!-- Global Risk Posture Summary Bar -->
+                <div v-if="globalDomainStats.risk_stats" class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="font-semibold text-slate-300 flex items-center gap-1.5">
+                            <span>🛡️</span> 全局外部域名安全态势:
+                        </span>
+                        <button @click="filterGlobalByRisk('critical')" :class="globalDomainFilters.riskLevel === 'critical' ? 'ring-2 ring-rose-500 font-bold' : ''" class="px-2.5 py-1 rounded-md bg-rose-950/80 border border-rose-800/60 text-rose-300 flex items-center gap-1.5 transition hover:bg-rose-900/60">
+                            <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                            <span>严重风险</span>
+                            <span class="font-mono bg-rose-900/80 px-1.5 rounded text-[11px]">{{ globalDomainStats.risk_stats.critical || 0 }}</span>
+                        </button>
+                        <button @click="filterGlobalByRisk('high')" :class="globalDomainFilters.riskLevel === 'high' ? 'ring-2 ring-red-500 font-bold' : ''" class="px-2.5 py-1 rounded-md bg-red-950/80 border border-red-800/60 text-red-300 flex items-center gap-1.5 transition hover:bg-red-900/60">
+                            <span class="w-2 h-2 rounded-full bg-red-500"></span>
+                            <span>高危风险</span>
+                            <span class="font-mono bg-red-900/80 px-1.5 rounded text-[11px]">{{ globalDomainStats.risk_stats.high || 0 }}</span>
+                        </button>
+                        <button @click="filterGlobalByRisk('medium')" :class="globalDomainFilters.riskLevel === 'medium' ? 'ring-2 ring-amber-500 font-bold' : ''" class="px-2.5 py-1 rounded-md bg-amber-950/80 border border-amber-800/60 text-amber-300 flex items-center gap-1.5 transition hover:bg-amber-900/60">
+                            <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+                            <span>中危风险</span>
+                            <span class="font-mono bg-amber-900/80 px-1.5 rounded text-[11px]">{{ globalDomainStats.risk_stats.medium || 0 }}</span>
+                        </button>
+                        <button @click="filterGlobalByRisk('low')" :class="globalDomainFilters.riskLevel === 'low' ? 'ring-2 ring-blue-500 font-bold' : ''" class="px-2.5 py-1 rounded-md bg-blue-950/80 border border-blue-800/60 text-blue-300 flex items-center gap-1.5 transition hover:bg-blue-900/60">
+                            <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                            <span>低危风险</span>
+                            <span class="font-mono bg-blue-900/80 px-1.5 rounded text-[11px]">{{ globalDomainStats.risk_stats.low || 0 }}</span>
+                        </button>
+                        <button @click="filterGlobalByRisk('safe')" :class="globalDomainFilters.riskLevel === 'safe' ? 'ring-2 ring-emerald-500 font-bold' : ''" class="px-2.5 py-1 rounded-md bg-emerald-950/80 border border-emerald-800/60 text-emerald-300 flex items-center gap-1.5 transition hover:bg-emerald-900/60">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            <span>官方/安全</span>
+                            <span class="font-mono bg-emerald-900/80 px-1.5 rounded text-[11px]">{{ globalDomainStats.risk_stats.safe || 0 }}</span>
+                        </button>
+                        <button @click="filterGlobalByRisk('pending')" :class="globalDomainFilters.riskLevel === 'pending' ? 'ring-2 ring-slate-500 font-bold' : ''" class="px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 text-slate-300 flex items-center gap-1.5 transition hover:bg-slate-700">
+                            <span class="w-2 h-2 rounded-full bg-slate-500"></span>
+                            <span>待研判</span>
+                            <span class="font-mono bg-slate-700 px-1.5 rounded text-[11px]">{{ globalDomainStats.risk_stats.pending || 0 }}</span>
+                        </button>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="openRiskProfilesModal" class="px-3 py-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/30 rounded-lg transition font-medium flex items-center gap-1.5">
+                            <span>🛡️ 管理风险情报库</span>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Filters & Global Export Bar -->
                 <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col xl:flex-row xl:items-center justify-between gap-3 text-xs shadow-md">
                     <div class="flex items-center gap-2.5 flex-wrap flex-1">
                         <input v-model="globalDomainFilters.search" @input="loadGlobalDomains(1)" placeholder="搜索域名或主根域名..."
                                class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-56 sm:w-64 lg:w-72 font-mono">
                         
+                        <select v-model="globalDomainFilters.riskLevel" @change="loadGlobalDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                            <option value="">全部风险级别</option>
+                            <option value="critical">🔴 严重风险</option>
+                            <option value="high">🔴 高危风险</option>
+                            <option value="medium">🟡 中危风险</option>
+                            <option value="low">🔵 低危风险</option>
+                            <option value="safe">🟢 官方/安全</option>
+                            <option value="pending">⚪ 待研判</option>
+                        </select>
+
+                        <select v-model="globalDomainFilters.verifyStatus" @change="loadGlobalDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                            <option value="">全部复测状态</option>
+                            <option value="verified_clean">🟢 已复测-已清除</option>
+                            <option value="verified_failed">🔴 已复测-仍存留</option>
+                            <option value="unverified">⚪ 未复测</option>
+                        </select>
+
                         <select v-model="globalDomainFilters.sourceType" @change="loadGlobalDomains(1)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
                             <option value="">全部来源特征</option>
                             <option value="link">包含超链接引用 (a/img/script)</option>
@@ -907,13 +1119,13 @@
 
                     <!-- Global Export Buttons -->
                     <div class="flex items-center gap-2 flex-wrap flex-shrink-0">
-                        <a :href="`/api/global-domains/export/txt?search=${encodeURIComponent(globalDomainFilters.search || '')}&min_tasks=${globalDomainFilters.minTasks || ''}`" download class="px-3 py-1.5 bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                        <a :href="`/api/global-domains/export/txt?search=${encodeURIComponent(globalDomainFilters.search || '')}&min_tasks=${globalDomainFilters.minTasks || ''}&risk_level=${encodeURIComponent(globalDomainFilters.riskLevel || '')}`" download class="px-3 py-1.5 bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
                             📥 导出 TXT
                         </a>
-                        <a :href="`/api/global-domains/export/csv?search=${encodeURIComponent(globalDomainFilters.search || '')}&min_tasks=${globalDomainFilters.minTasks || ''}`" download class="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                        <a :href="`/api/global-domains/export/csv?search=${encodeURIComponent(globalDomainFilters.search || '')}&min_tasks=${globalDomainFilters.minTasks || ''}&risk_level=${encodeURIComponent(globalDomainFilters.riskLevel || '')}`" download class="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
                             📊 导出 CSV
                         </a>
-                        <a :href="`/api/global-domains/export/json?search=${encodeURIComponent(globalDomainFilters.search || '')}&min_tasks=${globalDomainFilters.minTasks || ''}`" download class="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
+                        <a :href="`/api/global-domains/export/json?search=${encodeURIComponent(globalDomainFilters.search || '')}&min_tasks=${globalDomainFilters.minTasks || ''}&risk_level=${encodeURIComponent(globalDomainFilters.riskLevel || '')}`" download class="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 rounded-lg transition flex items-center gap-1 font-medium whitespace-nowrap">
                             📦 导出 JSON
                         </a>
                     </div>
@@ -931,6 +1143,7 @@
                                 <tr>
                                     <th class="py-3 px-4 min-w-[200px]">外部域名 (FQDN)</th>
                                     <th class="py-3 px-4 whitespace-nowrap">主根域名 (Root)</th>
+                                    <th class="py-3 px-4 whitespace-nowrap">风险评级 & 标签</th>
                                     <th class="py-3 px-4 whitespace-nowrap">全局出现总频次</th>
                                     <th class="py-3 px-4 whitespace-nowrap">覆盖扫描任务</th>
                                     <th class="py-3 px-4 whitespace-nowrap">来源特征</th>
@@ -951,6 +1164,31 @@
                                     </td>
                                     <td class="py-3 px-4 font-mono text-slate-400 whitespace-nowrap">
                                         <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/60">{{ d.root_domain }}</span>
+                                    </td>
+                                    <td class="py-3 px-4 whitespace-nowrap">
+                                        <span v-if="d.risk_level === 'critical'" class="px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800/80 font-bold text-xs flex items-center gap-1 w-fit">
+                                            🔴 严重
+                                        </span>
+                                        <span v-else-if="d.risk_level === 'high'" class="px-2 py-0.5 rounded bg-red-950 text-red-300 border border-red-800/80 font-semibold text-xs flex items-center gap-1 w-fit">
+                                            🔴 高危
+                                        </span>
+                                        <span v-else-if="d.risk_level === 'medium'" class="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/80 font-semibold text-xs flex items-center gap-1 w-fit">
+                                            🟡 中危
+                                        </span>
+                                        <span v-else-if="d.risk_level === 'low'" class="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/80 text-xs flex items-center gap-1 w-fit">
+                                            🔵 低危
+                                        </span>
+                                        <span v-else-if="d.risk_level === 'safe'" class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/80 text-xs flex items-center gap-1 w-fit">
+                                            🟢 安全
+                                        </span>
+                                        <span v-else class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 text-xs flex items-center gap-1 w-fit">
+                                            ⚪ 待研判
+                                        </span>
+                                        <div v-if="d.risk_tags && d.risk_tags.length" class="flex flex-wrap gap-1 mt-1">
+                                            <span v-for="tag in d.risk_tags" :key="tag" class="px-1 py-0.2 rounded bg-slate-800 text-slate-300 text-[10px] font-mono border border-slate-700/60">
+                                                #{{ tag }}
+                                            </span>
+                                        </div>
                                     </td>
                                     <td class="py-3 px-4 font-mono whitespace-nowrap">
                                         <span class="px-2.5 py-1 rounded-full bg-slate-800 text-amber-300 font-semibold">{{ d.total_occurrences }} 次</span>
@@ -1468,6 +1706,448 @@
                         <span class="text-slate-500 hidden sm:inline">（提示: 点击“进入此任务”可切换并查看任务详情）</span>
                     </div>
                     <button @click="showAssociatedTasksModal = false" class="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= MODAL: RISK INTELLIGENCE & ROOT DOMAIN PROFILES ================= -->
+        <div v-if="showRiskProfilesModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl lg:max-w-5xl xl:max-w-6xl w-full p-6 shadow-2xl space-y-4 max-h-[88vh] flex flex-col">
+                <!-- Header -->
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3 gap-3">
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-base font-bold text-white flex items-center gap-2">
+                            <span>🛡️ 预置风险根域名与威胁情报库管理</span>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-950 text-rose-300 border border-rose-800/60">
+                                自动规则 & 通配匹配
+                            </span>
+                        </h3>
+                        <p class="text-xs text-slate-400 mt-0.5">
+                            预置恶意/灰产/暗链根域名与特定域名，未来扫描自动通配标记；支持一键追溯全库历史任务进行批量标记
+                        </p>
+                    </div>
+                    <button @click="showRiskProfilesModal = false" class="text-slate-400 hover:text-white text-lg px-2 py-1 rounded hover:bg-slate-800 transition">✕</button>
+                </div>
+
+                <!-- Action & Filter Bar -->
+                <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                    <div class="flex items-center gap-2.5 flex-wrap flex-1 w-full sm:w-auto">
+                        <input v-model="riskProfileSearch" @input="loadRiskProfiles(1)" placeholder="搜索情报域名或分类/标签..."
+                               class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-rose-500 w-56 sm:w-64 font-mono">
+                        
+                        <select v-model="riskProfileLevelFilter" @change="loadRiskProfiles(1)" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none">
+                            <option value="">全部风险级别</option>
+                            <option value="critical">🔴 严重风险</option>
+                            <option value="high">🔴 高危风险</option>
+                            <option value="medium">🟡 中危风险</option>
+                            <option value="low">🔵 低危风险</option>
+                            <option value="safe">🟢 官方/安全白名单</option>
+                        </select>
+                    </div>
+
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button @click="showAddProfileForm = !showAddProfileForm; showBatchImportProfilesForm = false"
+                                class="px-3 py-1.5 bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 rounded-lg transition font-medium flex items-center gap-1.5">
+                            <span>+ 新增风险域名/根域</span>
+                        </button>
+                        <button @click="showBatchImportProfilesForm = !showBatchImportProfilesForm; showAddProfileForm = false"
+                                class="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 rounded-lg transition font-medium flex items-center gap-1.5">
+                            <span>📑 批量导入</span>
+                        </button>
+                        <button @click="syncAllProfilesToHistory" :disabled="isSyncingHistory"
+                                class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 rounded-lg transition font-medium flex items-center gap-1.5"
+                                title="将所有预置情报规则对全库历史任务已发现的外部域名进行全面追溯标记">
+                            <span v-if="isSyncingHistory" class="animate-spin">🔄</span>
+                            <span v-else>⚡</span>
+                            <span>{{ isSyncingHistory ? '正在追溯全库...' : '同步全库历史记录' }}</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Form: Add Single Profile -->
+                <div v-if="showAddProfileForm" class="bg-slate-950 p-4 rounded-xl border border-rose-800/40 space-y-3 text-xs">
+                    <div class="font-bold text-rose-300 flex items-center justify-between">
+                        <span>✨ 新增风险域名 / 根域名情报规则</span>
+                        <button @click="showAddProfileForm = false" class="text-slate-500 hover:text-slate-300">✕</button>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-slate-400 mb-1 font-semibold">域名 / 根域名 <span class="text-rose-400">*</span></label>
+                            <input v-model="newProfile.domain" placeholder="例如: evil-domain.com 或 sub.site.cc"
+                                   class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 font-mono focus:border-rose-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-slate-400 mb-1 font-semibold">匹配模式</label>
+                            <select v-model="newProfile.match_type" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none">
+                                <option value="root">主根域名通配 (*.example.com)</option>
+                                <option value="exact">精确域名匹配 (完全相同)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-slate-400 mb-1 font-semibold">风险级别</label>
+                            <select v-model="newProfile.risk_level" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none">
+                                <option value="critical">🔴 严重风险 (Critical)</option>
+                                <option value="high">🔴 高危风险 (High)</option>
+                                <option value="medium">🟡 中危风险 (Medium)</option>
+                                <option value="low">🔵 低危风险 (Low)</option>
+                                <option value="safe">🟢 官方/白名单 (Safe)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-slate-400 mb-1">威胁分类</label>
+                            <input v-model="newProfile.category" placeholder="例如: 赌博黑产 / 钓鱼欺诈 / 恶意挖矿 / 供应链劫持"
+                                   class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 focus:border-rose-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-slate-400 mb-1">标签 (逗号分隔)</label>
+                            <input v-model="newProfile.tags" placeholder="例如: 菠菜, 劫持, 广告弹窗"
+                                   class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 focus:border-rose-500 focus:outline-none">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 mb-1">研判说明与备注</label>
+                        <textarea v-model="newProfile.remark" rows="2" placeholder="填写情报来源、处置依据或研判备忘..."
+                                  class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 text-xs focus:border-rose-500 focus:outline-none"></textarea>
+                    </div>
+                    <div class="flex items-center justify-between pt-1">
+                        <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                            <input type="checkbox" v-model="newProfile.sync_to_history" class="rounded bg-slate-900 border-slate-700 text-rose-500">
+                            <span class="text-amber-300 font-semibold">自动同步标记全系统历史任务中已扫描出的该域名</span>
+                        </label>
+                        <div class="flex items-center gap-2">
+                            <button @click="showAddProfileForm = false" class="px-3 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700">取消</button>
+                            <button @click="submitAddProfile" class="px-4 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-semibold shadow">保存并生效</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Form: Batch Import Profiles -->
+                <div v-if="showBatchImportProfilesForm" class="bg-slate-950 p-4 rounded-xl border border-indigo-800/40 space-y-3 text-xs">
+                    <div class="font-bold text-indigo-300 flex items-center justify-between">
+                        <span>📑 批量导入威胁情报域名列表</span>
+                        <button @click="showBatchImportProfilesForm = false" class="text-slate-500 hover:text-slate-300">✕</button>
+                    </div>
+                    <div>
+                        <textarea v-model="batchImportProfilesText" rows="5"
+                                  placeholder="每行一个域名或规则，例如：&#10;evil-site.com&#10;*.phishing-network.xyz,critical,钓鱼欺诈,钓鱼/诈骗&#10;adtracker.cc,medium,广告追踪&#10;support.internal.com,safe,内部官方白名单&#10;# 支持纯域名或逗号分隔：域名,风险等级,分类,标签"
+                                  class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-slate-200 font-mono text-xs focus:border-indigo-500 focus:outline-none"></textarea>
+                        <p class="text-[11px] text-slate-500 mt-1">支持以 *. 开头表示根域名通配模式，导入后将自动生效并通报全库历史更新。</p>
+                    </div>
+                    <div class="flex items-center justify-end gap-2">
+                        <button @click="showBatchImportProfilesForm = false" class="px-3 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700">取消</button>
+                        <button @click="submitBatchImportProfiles" :disabled="isImportingProfiles" class="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow flex items-center gap-1">
+                            <span v-if="isImportingProfiles" class="animate-spin">🌀</span>
+                            <span>{{ isImportingProfiles ? '正在导入并比对...' : '立即导入情报' }}</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Profiles List Table -->
+                <div class="flex-1 overflow-y-auto min-h-0 bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-inner">
+                    <div v-if="riskProfiles.length === 0" class="py-16 text-center text-slate-500 text-xs">
+                        <p class="text-4xl mb-2">🛡️</p>
+                        <p>暂无配置的情报规则，点击上方「新增」或「批量导入」添加</p>
+                    </div>
+                    <table v-else class="w-full text-left text-xs">
+                        <thead class="bg-slate-900/90 text-slate-400 border-b border-slate-800 font-medium whitespace-nowrap sticky top-0">
+                            <tr>
+                                <th class="py-2.5 px-4">域名 / 通配规则</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">匹配类型</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">风险评级</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">威胁分类与标签</th>
+                                <th class="py-2.5 px-4 max-w-xs">说明与备注</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">录入时间</th>
+                                <th class="py-2.5 px-4 text-right whitespace-nowrap">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800/60 text-slate-300">
+                            <tr v-for="p in riskProfiles" :key="p.id" class="hover:bg-slate-900/50 transition">
+                                <td class="py-2.5 px-4 font-mono font-bold text-rose-300 whitespace-nowrap">
+                                    <span v-if="p.match_type === 'root'">*.{{ p.domain }}</span>
+                                    <span v-else>{{ p.domain }}</span>
+                                </td>
+                                <td class="py-2.5 px-4 whitespace-nowrap">
+                                    <span v-if="p.match_type === 'root'" class="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/40 text-[11px]">
+                                        根域名通配
+                                    </span>
+                                    <span v-else class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 text-[11px]">
+                                        精确域名
+                                    </span>
+                                </td>
+                                <td class="py-2.5 px-4 whitespace-nowrap">
+                                    <span v-if="p.risk_level === 'critical'" class="px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800/80 font-bold text-xs">🔴 严重</span>
+                                    <span v-else-if="p.risk_level === 'high'" class="px-2 py-0.5 rounded bg-red-950 text-red-300 border border-red-800/80 font-semibold text-xs">🔴 高危</span>
+                                    <span v-else-if="p.risk_level === 'medium'" class="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/80 font-semibold text-xs">🟡 中危</span>
+                                    <span v-else-if="p.risk_level === 'low'" class="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/80 text-xs">🔵 低危</span>
+                                    <span v-else class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/80 text-xs">🟢 安全白名单</span>
+                                </td>
+                                <td class="py-2.5 px-4 whitespace-nowrap">
+                                    <div class="flex items-center gap-1.5 flex-wrap">
+                                        <span v-if="p.category" class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 text-[11px] font-medium border border-slate-700/60">
+                                            {{ p.category }}
+                                        </span>
+                                        <span v-for="t in p.tags" :key="t" class="px-1 py-0.2 rounded bg-rose-950/60 text-rose-300 text-[10px] font-mono border border-rose-800/40">
+                                            #{{ t }}
+                                        </span>
+                                    </div>
+                                </td>
+                                <td class="py-2.5 px-4 max-w-xs truncate text-slate-400 text-[11px]" :title="p.remark">
+                                    {{ p.remark || '（无备注）' }}
+                                </td>
+                                <td class="py-2.5 px-4 text-slate-500 font-mono text-[11px] whitespace-nowrap">
+                                    {{ p.created_at }}
+                                </td>
+                                <td class="py-2.5 px-4 text-right whitespace-nowrap">
+                                    <button @click="deleteRiskProfile(p.id, p.domain)" class="px-2.5 py-1 text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 rounded transition">
+                                        删除
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Footer & Pagination -->
+                <div class="flex items-center justify-between border-t border-slate-800 pt-3 text-xs text-slate-400">
+                    <div class="flex items-center gap-2">
+                        <span>共 <strong class="text-white font-mono">{{ riskProfilesTotal }}</strong> 条情报规则</span>
+                        <span class="text-slate-600">|</span>
+                        <span class="text-slate-500 hidden sm:inline">💡 根域模式自动匹配子域 (*.evil.com 匹配任意级别子域)</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center gap-1.5">
+                            <button :disabled="riskProfilePage <= 1" @click="loadRiskProfiles(riskProfilePage - 1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">上一页</button>
+                            <span class="font-mono text-slate-300">第 {{ riskProfilePage }} / {{ Math.ceil(riskProfilesTotal / 50) || 1 }} 页</span>
+                            <button :disabled="riskProfilePage * 50 >= riskProfilesTotal" @click="loadRiskProfiles(riskProfilePage + 1)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">下一页</button>
+                        </div>
+                        <button @click="showRiskProfilesModal = false" class="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium transition">关闭</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= MODAL: MANUAL RISK TAGGING ================= -->
+        <div v-if="showTagModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div>
+                        <h3 class="text-base font-bold text-white flex items-center gap-2">
+                            <span>🏷️ 外部域名人工研判与安全评级</span>
+                        </h3>
+                        <p class="text-xs text-sky-400 font-mono mt-0.5 truncate" :title="tagTargetDomain?.domain">
+                            {{ tagTargetDomain?.domain }}
+                        </p>
+                    </div>
+                    <button @click="showTagModal = false" class="text-slate-400 hover:text-white text-lg">✕</button>
+                </div>
+
+                <div class="space-y-4 text-xs">
+                    <!-- Risk Level Radio Buttons -->
+                    <div>
+                        <label class="block font-semibold text-slate-300 mb-2">安全风险级别评定</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="tagForm.risk_level === 'critical' ? 'bg-rose-950/80 border-rose-500 text-rose-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="critical" v-model="tagForm.risk_level" class="text-rose-500">
+                                <span>🔴 严重风险</span>
+                            </label>
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="tagForm.risk_level === 'high' ? 'bg-red-950/80 border-red-500 text-red-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="high" v-model="tagForm.risk_level" class="text-red-500">
+                                <span>🔴 高危风险</span>
+                            </label>
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="tagForm.risk_level === 'medium' ? 'bg-amber-950/80 border-amber-500 text-amber-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="medium" v-model="tagForm.risk_level" class="text-amber-500">
+                                <span>🟡 中危风险</span>
+                            </label>
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="tagForm.risk_level === 'low' ? 'bg-blue-950/80 border-blue-500 text-blue-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="low" v-model="tagForm.risk_level" class="text-blue-500">
+                                <span>🔵 低危风险</span>
+                            </label>
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="tagForm.risk_level === 'safe' ? 'bg-emerald-950/80 border-emerald-500 text-emerald-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="safe" v-model="tagForm.risk_level" class="text-emerald-500">
+                                <span>🟢 官方/安全</span>
+                            </label>
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="tagForm.risk_level === 'pending' ? 'bg-slate-800 border-slate-600 text-slate-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="pending" v-model="tagForm.risk_level" class="text-slate-500">
+                                <span>⚪ 待研判</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Preset Tag Pills -->
+                    <div>
+                        <label class="block font-semibold text-slate-300 mb-1.5">研判属性标签 (点击快速添加)</label>
+                        <div class="flex flex-wrap gap-1.5">
+                            <button type="button" v-for="tag in ['恶意链接', '暗链篡改', '赌博黑产', '广告追踪', 'CDN资源', '官方业务', '供应链依赖', 'API服务', '统计分析']"
+                                    :key="tag" @click="toggleTag(tag)"
+                                    class="px-2 py-1 rounded-md text-[11px] transition border"
+                                    :class="tagForm.tags.includes(tag) ? 'bg-purple-950 text-purple-200 border-purple-600 font-semibold' : 'bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-700'">
+                                {{ tagForm.tags.includes(tag) ? '✓ ' + tag : '+ ' + tag }}
+                            </button>
+                        </div>
+                        <!-- Custom Tag Input -->
+                        <div class="flex items-center gap-2 mt-2">
+                            <input v-model="tagForm.customTag" @keyup.enter="addCustomTag" placeholder="自定义标签名称..."
+                                   class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-200 text-xs flex-1 focus:outline-none focus:border-purple-500">
+                            <button type="button" @click="addCustomTag" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700">添加</button>
+                        </div>
+                    </div>
+
+                    <!-- Remark -->
+                    <div>
+                        <label class="block font-semibold text-slate-300 mb-1">研判说明与处置结论</label>
+                        <textarea v-model="tagForm.remark" rows="3" placeholder="例如：经排查属于合法的业务CDN节点，或该域名系页面被黑篡改注入的恶意菠菜跳板..."
+                                  class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-slate-200 text-xs focus:outline-none focus:border-purple-500"></textarea>
+                    </div>
+
+                    <!-- Sync to Global Risk Profile Checkbox -->
+                    <div class="bg-purple-950/30 border border-purple-800/40 p-3 rounded-xl space-y-2">
+                        <label class="flex items-center gap-2 text-purple-200 font-semibold cursor-pointer">
+                            <input type="checkbox" v-model="tagForm.sync_to_global" class="rounded bg-slate-900 border-purple-700 text-purple-500">
+                            <span>将此研判结果一并写入全局风险情报库</span>
+                        </label>
+                        <p class="text-[11px] text-slate-400 pl-6">
+                            勾选后，后续所有新扫描任务及全系统检测到该域名时将自动遵循该风险等级。
+                        </p>
+                        <div v-if="tagForm.sync_to_global" class="pl-6 pt-1 flex items-center gap-2">
+                            <span class="text-slate-400">通配模式:</span>
+                            <select v-model="tagForm.match_type" class="bg-slate-900 border border-purple-700/60 rounded px-2 py-0.5 text-purple-200 text-xs focus:outline-none">
+                                <option value="root">主根域名通配 (*.{{ tagTargetDomain?.root_domain || tagTargetDomain?.domain }})</option>
+                                <option value="exact">精确域名匹配 (仅此FQDN)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-end gap-2.5 border-t border-slate-800 pt-3">
+                    <button @click="showTagModal = false" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium">取消</button>
+                    <button @click="saveTagForm" class="px-5 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-md shadow-purple-600/20">保存研判</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= MODAL: TARGETED REMEDIATION VERIFY REPORT ================= -->
+        <div v-if="showVerifyModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl lg:max-w-4xl w-full p-6 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
+                <!-- Header -->
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3 gap-3">
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-base font-bold text-white flex items-center gap-2">
+                            <span>🔍 外部域名闭环复测报告</span>
+                            <span :class="verifyVerdict?.verify_status === 'verified_clean' ? 'bg-emerald-950 text-emerald-300 border-emerald-800/80' : (verifyVerdict?.verify_status === 'verified_failed' ? 'bg-rose-950 text-rose-300 border-rose-800/80' : 'bg-slate-800 text-slate-300 border-slate-700')"
+                                  class="px-2.5 py-0.5 rounded-full text-xs font-semibold border">
+                                {{ verifyVerdict?.verify_status === 'verified_clean' ? '🟢 已修复 (全部清除)' : (verifyVerdict?.verify_status === 'verified_failed' ? '🔴 未修复 (依然残留)' : '⚪ 复测结果') }}
+                            </span>
+                        </h3>
+                        <p class="text-xs text-sky-400 font-mono mt-0.5 truncate" :title="verifyTargetDomain">
+                            测试目标: {{ verifyTargetDomain }}
+                        </p>
+                    </div>
+                    <button @click="showVerifyModal = false" class="text-slate-400 hover:text-white text-lg px-2 py-1 rounded hover:bg-slate-800 transition">✕</button>
+                </div>
+
+                <!-- Verdict Banner -->
+                <div v-if="verifyVerdict?.verify_status === 'verified_clean'"
+                     class="p-4 rounded-xl bg-emerald-950/60 border border-emerald-800/60 text-emerald-200 text-xs flex items-start gap-3 shadow-inner">
+                    <span class="text-2xl">🎉</span>
+                    <div class="space-y-1">
+                        <div class="font-bold text-sm text-emerald-300">定向闭环复测通过：该域名已在网页中全部清除！</div>
+                        <p class="text-emerald-400/80 leading-relaxed">
+                            系统针对该域名历史出现过的页面发起实时网络请求重新核查，确认所有网页代码及超链接属性中均已不再包含该外部域名，风险隐患已成功处置。
+                        </p>
+                    </div>
+                </div>
+                <div v-else-if="verifyVerdict?.verify_status === 'verified_failed'"
+                     class="p-4 rounded-xl bg-rose-950/60 border border-rose-800/60 text-rose-200 text-xs flex items-start gap-3 shadow-inner">
+                    <span class="text-2xl">⚠️</span>
+                    <div class="space-y-1">
+                        <div class="font-bold text-sm text-rose-300">定向闭环复测不通过：该域名依然在页面中残留！</div>
+                        <p class="text-rose-400/80 leading-relaxed">
+                            复测检测到仍有网页在响应内容中存在该外部域名的链接或内嵌文本，说明相关隐患未被彻底整改，需继续跟进处置。
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Metrics Summary -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+                    <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                        <div class="text-slate-500">复测时间</div>
+                        <div class="text-slate-200 font-semibold mt-0.5">{{ verifyVerdict?.verify_time || '刚刚' }}</div>
+                    </div>
+                    <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                        <div class="text-slate-500">复测核验页面</div>
+                        <div class="text-sky-400 font-bold mt-0.5">{{ verifyVerdict?.total_pages || 0 }} 个</div>
+                    </div>
+                    <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                        <div class="text-slate-500">依然残留页面</div>
+                        <div :class="verifyVerdict?.remaining_pages > 0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'" class="mt-0.5">
+                            {{ verifyVerdict?.remaining_pages || 0 }} 个
+                        </div>
+                    </div>
+                    <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                        <div class="text-slate-500">整改清除率</div>
+                        <div class="text-amber-300 font-bold mt-0.5">
+                            {{ verifyVerdict?.total_pages ? Math.round(((verifyVerdict.total_pages - (verifyVerdict.remaining_pages || 0)) / verifyVerdict.total_pages) * 100) : 100 }}%
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Occurrence Details Table -->
+                <div class="flex-1 overflow-y-auto min-h-0 bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-inner text-xs">
+                    <div v-if="!verifyVerdict?.details || verifyVerdict.details.length === 0" class="py-12 text-center text-slate-500">
+                        暂无页面级复测细节
+                    </div>
+                    <table v-else class="w-full text-left">
+                        <thead class="bg-slate-900/90 text-slate-400 border-b border-slate-800 font-medium whitespace-nowrap sticky top-0">
+                            <tr>
+                                <th class="py-2.5 px-4">复测网页 URL</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">HTTP 状态</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">复测结论</th>
+                                <th class="py-2.5 px-4">残留代码证据片段</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800/60 text-slate-300">
+                            <tr v-for="(det, dIdx) in verifyVerdict.details" :key="dIdx" class="hover:bg-slate-900/40 transition">
+                                <td class="py-2.5 px-4 font-mono max-w-xs truncate" :title="det.page_url">
+                                    <a :href="det.page_url" target="_blank" class="text-sky-400 hover:underline">{{ det.page_url }}</a>
+                                </td>
+                                <td class="py-2.5 px-4 whitespace-nowrap font-mono">
+                                    <span :class="det.status_code === 200 ? 'text-emerald-400' : 'text-slate-500'">
+                                        {{ det.status_code || 'ERR' }}
+                                    </span>
+                                </td>
+                                <td class="py-2.5 px-4 whitespace-nowrap">
+                                    <span v-if="det.found" class="px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800/60 font-semibold text-[11px]">
+                                        🔴 仍存留 (Found)
+                                    </span>
+                                    <span v-else class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60 font-semibold text-[11px]">
+                                        🟢 已清除 (Clean)
+                                    </span>
+                                </td>
+                                <td class="py-2.5 px-4 font-mono text-[11px] max-w-sm break-all">
+                                    <div v-if="det.snippet" class="bg-slate-900 p-1.5 rounded border border-slate-800 text-amber-300">
+                                        {{ det.snippet }}
+                                    </div>
+                                    <span v-else class="text-slate-500">页面代码中未发现匹配串</span>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Footer -->
+                <div class="flex items-center justify-between border-t border-slate-800 pt-3">
+                    <span class="text-xs text-slate-500">
+                        {{ verifyVerdict?.summary || '定向复测已完成' }}
+                    </span>
+                    <button @click="showVerifyModal = false" class="px-5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs transition">关闭</button>
                 </div>
             </div>
         </div>

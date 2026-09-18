@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from app.db.database import db_session
+from app.crawler.risk_engine import evaluate_domain_risk
 
 def now_iso() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -210,12 +211,16 @@ def save_crawl_result(task_id: int, page_data: dict, external_domains: List[dict
 
         # 2. Upsert external domains
         if external_domains:
+            cursor.execute("SELECT * FROM domain_risk_profiles")
+            profiles = [dict(r) for r in cursor.fetchall()]
             for d in external_domains:
+                risk_info = evaluate_domain_risk(d['domain'], d['root_domain'], profiles)
                 cursor.execute("""
                     INSERT INTO external_domains (
                         task_id, domain, root_domain, occurrence_count,
-                        has_link, has_text, sample_page_url, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        has_link, has_text, sample_page_url,
+                        risk_level, risk_tags, risk_remark, risk_source, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(task_id, domain) DO UPDATE SET
                         occurrence_count = occurrence_count + excluded.occurrence_count,
                         has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE has_link END,
@@ -229,6 +234,10 @@ def save_crawl_result(task_id: int, page_data: dict, external_domains: List[dict
                     1 if d.get('has_link') else 0,
                     1 if d.get('has_text') else 0,
                     d.get('sample_page_url', ''),
+                    risk_info['risk_level'],
+                    json.dumps(risk_info['risk_tags'], ensure_ascii=False),
+                    risk_info['risk_remark'],
+                    risk_info['risk_source'],
                     now
                 ))
 
@@ -429,12 +438,17 @@ def save_crawl_results_batch(
                 if d.get('has_text'):
                     aggregated_ext[dom]["has_text"] = 1
 
+        cursor.execute("SELECT * FROM domain_risk_profiles")
+        profiles = [dict(r) for r in cursor.fetchall()]
+
         for d in aggregated_ext.values():
+            risk_info = evaluate_domain_risk(d['domain'], d['root_domain'], profiles)
             cursor.execute("""
                 INSERT INTO external_domains (
                     task_id, domain, root_domain, occurrence_count,
-                    has_link, has_text, sample_page_url, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    has_link, has_text, sample_page_url,
+                    risk_level, risk_tags, risk_remark, risk_source, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id, domain) DO UPDATE SET
                     occurrence_count = occurrence_count + excluded.occurrence_count,
                     has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE has_link END,
@@ -448,6 +462,10 @@ def save_crawl_results_batch(
                 d['has_link'],
                 d['has_text'],
                 d['sample_page_url'],
+                risk_info['risk_level'],
+                json.dumps(risk_info['risk_tags'], ensure_ascii=False),
+                risk_info['risk_remark'],
+                risk_info['risk_source'],
                 now
             ))
 
@@ -669,6 +687,7 @@ def insert_domain_occurrences(task_id: int, occurrences: List[dict]):
 def list_external_domains(task_id: int, has_link: Optional[int] = None,
                           has_text: Optional[int] = None, source_type: Optional[str] = None,
                           root_domain: Optional[str] = None, search: Optional[str] = None,
+                          risk_level: Optional[str] = None, verify_status: Optional[str] = None,
                           sort_by: str = 'occurrence_count', order: str = 'DESC',
                           limit: int = 50, offset: int = 0) -> Tuple[List[dict], int]:
     with db_session() as conn:
@@ -689,6 +708,22 @@ def list_external_domains(task_id: int, has_link: Optional[int] = None,
             count_query += " AND has_text = ?"
             params.append(has_text)
             count_params.append(has_text)
+
+        if risk_level:
+            if risk_level == 'risk_only':
+                query += " AND risk_level IN ('critical', 'high', 'medium')"
+                count_query += " AND risk_level IN ('critical', 'high', 'medium')"
+            else:
+                query += " AND risk_level = ?"
+                count_query += " AND risk_level = ?"
+                params.append(risk_level)
+                count_params.append(risk_level)
+
+        if verify_status:
+            query += " AND verify_status = ?"
+            count_query += " AND verify_status = ?"
+            params.append(verify_status)
+            count_params.append(verify_status)
 
         if source_type == 'asset':
             asset_clause = """ AND (
@@ -725,7 +760,14 @@ def list_external_domains(task_id: int, has_link: Optional[int] = None,
         total = cursor.fetchone()[0]
 
         # Validate sorting column
-        valid_cols = {'occurrence_count': 'occurrence_count', 'domain': 'domain', 'root_domain': 'root_domain', 'id': 'id'}
+        valid_cols = {
+            'occurrence_count': 'occurrence_count',
+            'domain': 'domain',
+            'root_domain': 'root_domain',
+            'risk_level': 'risk_level',
+            'verify_status': 'verify_status',
+            'id': 'id'
+        }
         col = valid_cols.get(sort_by, 'occurrence_count')
         sort_order = 'ASC' if order.upper() == 'ASC' else 'DESC'
 
@@ -733,7 +775,16 @@ def list_external_domains(task_id: int, has_link: Optional[int] = None,
         params.extend([limit, offset])
 
         cursor.execute(query, params)
-        rows = [dict(r) for r in cursor.fetchall()]
+        rows = []
+        for r in cursor.fetchall():
+            item = dict(r)
+            raw_tags = item.get("risk_tags") or "[]"
+            if isinstance(raw_tags, str):
+                try:
+                    item["risk_tags"] = json.loads(raw_tags)
+                except Exception:
+                    item["risk_tags"] = [raw_tags] if raw_tags else []
+            rows.append(item)
         return rows, total
 
 def get_domain_occurrences(task_id: int, domain: str, limit: int = 50) -> List[dict]:
@@ -751,12 +802,23 @@ def get_external_domains_for_export(task_id: int) -> List[dict]:
     with db_session() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT domain, root_domain, occurrence_count, has_link, has_text, sample_page_url, created_at
+            SELECT domain, root_domain, occurrence_count, has_link, has_text, sample_page_url,
+                   risk_level, risk_tags, risk_remark, risk_source, verify_status, verify_time, created_at
             FROM external_domains
             WHERE task_id = ?
             ORDER BY occurrence_count DESC, domain ASC
         """, (task_id,))
-        return [dict(r) for r in cursor.fetchall()]
+        rows = []
+        for r in cursor.fetchall():
+            item = dict(r)
+            raw_tags = item.get("risk_tags") or "[]"
+            if isinstance(raw_tags, str):
+                try:
+                    item["risk_tags"] = json.loads(raw_tags)
+                except Exception:
+                    item["risk_tags"] = [raw_tags] if raw_tags else []
+            rows.append(item)
+        return rows
 
 def get_external_domains_stats(task_id: int) -> dict:
     with db_session() as conn:
@@ -775,6 +837,39 @@ def get_external_domains_stats(task_id: int) -> dict:
         cursor.execute("SELECT COUNT(*) FROM external_domains WHERE task_id = ? AND has_text = 1", (task_id,))
         text_domains = cursor.fetchone()[0]
 
+        # Risk breakdown stats
+        cursor.execute("""
+            SELECT risk_level, COUNT(*) as cnt
+            FROM external_domains
+            WHERE task_id = ?
+            GROUP BY risk_level
+        """, (task_id,))
+        risk_map = {r['risk_level']: r['cnt'] for r in cursor.fetchall()}
+        risk_stats = {
+            "critical": risk_map.get("critical", 0),
+            "high": risk_map.get("high", 0),
+            "medium": risk_map.get("medium", 0),
+            "low": risk_map.get("low", 0),
+            "safe": risk_map.get("safe", 0),
+            "pending": risk_map.get("pending", 0),
+            "total_risk": risk_map.get("critical", 0) + risk_map.get("high", 0) + risk_map.get("medium", 0)
+        }
+
+        # Verification stats
+        cursor.execute("""
+            SELECT verify_status, COUNT(*) as cnt
+            FROM external_domains
+            WHERE task_id = ?
+            GROUP BY verify_status
+        """, (task_id,))
+        verify_map = {r['verify_status']: r['cnt'] for r in cursor.fetchall()}
+        verify_stats = {
+            "unverified": verify_map.get("unverified", 0),
+            "verified_clean": verify_map.get("verified_clean", 0),
+            "verified_failed": verify_map.get("verified_failed", 0),
+            "error": verify_map.get("error", 0)
+        }
+
         # Top 10 root domains
         cursor.execute("""
             SELECT root_domain, COUNT(*) as domain_count, SUM(occurrence_count) as total_occurrences
@@ -788,7 +883,7 @@ def get_external_domains_stats(task_id: int) -> dict:
 
         # Top 10 domains
         cursor.execute("""
-            SELECT domain, root_domain, occurrence_count, has_link, has_text
+            SELECT domain, root_domain, occurrence_count, has_link, has_text, risk_level
             FROM external_domains
             WHERE task_id = ?
             ORDER BY occurrence_count DESC
@@ -801,6 +896,8 @@ def get_external_domains_stats(task_id: int) -> dict:
             "unique_root_domains": unique_roots,
             "link_domains": link_domains,
             "text_domains": text_domains,
+            "risk_stats": risk_stats,
+            "verify_stats": verify_stats,
             "top_root_domains": top_roots,
             "top_domains": top_domains
         }
@@ -1005,6 +1102,8 @@ def list_global_external_domains(
     root_domain: Optional[str] = None,
     has_link: Optional[int] = None,
     has_text: Optional[int] = None,
+    risk_level: Optional[str] = None,
+    verify_status: Optional[str] = None,
     min_tasks: Optional[int] = None,
     sort_by: str = 'total_occurrences',
     order: str = 'DESC',
@@ -1038,6 +1137,17 @@ def list_global_external_domains(
             where_clauses.append("ed.has_text = ?")
             params.append(has_text)
 
+        if risk_level:
+            if risk_level == 'risk_only':
+                where_clauses.append("ed.risk_level IN ('critical', 'high', 'medium')")
+            else:
+                where_clauses.append("ed.risk_level = ?")
+                params.append(risk_level)
+
+        if verify_status:
+            where_clauses.append("ed.verify_status = ?")
+            params.append(verify_status)
+
         where_sql = " AND ".join(where_clauses)
 
         having_clauses = []
@@ -1068,6 +1178,7 @@ def list_global_external_domains(
             'task_count': 'task_count',
             'domain': 'ed.domain',
             'root_domain': 'ed.root_domain',
+            'risk_level': 'risk_level',
             'first_seen_at': 'first_seen_at',
             'last_seen_at': 'last_seen_at'
         }
@@ -1086,6 +1197,11 @@ def list_global_external_domains(
                 MIN(ed.created_at) as first_seen_at,
                 MAX(ed.created_at) as last_seen_at,
                 MIN(ed.sample_page_url) as sample_page_url,
+                MAX(ed.risk_level) as risk_level,
+                MAX(ed.risk_tags) as risk_tags_raw,
+                MAX(ed.risk_remark) as risk_remark,
+                MAX(ed.verify_status) as verify_status,
+                MAX(ed.verify_time) as verify_time,
                 GROUP_CONCAT(t.id || ':::' || t.name || ':::' || ed.occurrence_count, ';;;') as tasks_summary_raw
             FROM external_domains ed
             JOIN tasks t ON ed.task_id = t.id
@@ -1113,6 +1229,14 @@ def list_global_external_domains(
                         "occurrence_count": int(parts[2])
                     })
 
+            raw_tags = r["risk_tags_raw"] or "[]"
+            tags_list = []
+            if isinstance(raw_tags, str):
+                try:
+                    tags_list = json.loads(raw_tags)
+                except Exception:
+                    tags_list = [raw_tags] if raw_tags else []
+
             results.append({
                 "domain": r["domain"],
                 "root_domain": r["root_domain"],
@@ -1120,6 +1244,11 @@ def list_global_external_domains(
                 "task_count": r["task_count"],
                 "has_link": bool(r["has_link"]),
                 "has_text": bool(r["has_text"]),
+                "risk_level": r["risk_level"] or "pending",
+                "risk_tags": tags_list,
+                "risk_remark": r["risk_remark"] or "",
+                "verify_status": r["verify_status"] or "unverified",
+                "verify_time": r["verify_time"] or "",
                 "first_seen_at": r["first_seen_at"],
                 "last_seen_at": r["last_seen_at"],
                 "sample_page_url": r["sample_page_url"] or "",
@@ -1152,6 +1281,37 @@ def get_global_domains_stats() -> dict:
             )
         """)
         shared_domains_count = cursor.fetchone()[0]
+
+        # Risk breakdown stats across global domains
+        cursor.execute("""
+            SELECT risk_level, COUNT(DISTINCT domain) as cnt
+            FROM external_domains
+            GROUP BY risk_level
+        """)
+        risk_map = {r['risk_level']: r['cnt'] for r in cursor.fetchall()}
+        risk_stats = {
+            "critical": risk_map.get("critical", 0),
+            "high": risk_map.get("high", 0),
+            "medium": risk_map.get("medium", 0),
+            "low": risk_map.get("low", 0),
+            "safe": risk_map.get("safe", 0),
+            "pending": risk_map.get("pending", 0),
+            "total_risk": risk_map.get("critical", 0) + risk_map.get("high", 0) + risk_map.get("medium", 0)
+        }
+
+        # Verification stats
+        cursor.execute("""
+            SELECT verify_status, COUNT(DISTINCT domain) as cnt
+            FROM external_domains
+            GROUP BY verify_status
+        """)
+        verify_map = {r['verify_status']: r['cnt'] for r in cursor.fetchall()}
+        verify_stats = {
+            "unverified": verify_map.get("unverified", 0),
+            "verified_clean": verify_map.get("verified_clean", 0),
+            "verified_failed": verify_map.get("verified_failed", 0),
+            "error": verify_map.get("error", 0)
+        }
 
         # Top 10 Root Domains
         cursor.execute("""
@@ -1188,6 +1348,8 @@ def get_global_domains_stats() -> dict:
             "total_occurrences": total_occurrences,
             "shared_domains_count": shared_domains_count,
             "shared_multi_task_domains": shared_domains_count,
+            "risk_stats": risk_stats,
+            "verify_stats": verify_stats,
             "top_roots": top_roots,
             "top_root_domains": top_roots,
             "top_shared_domains": top_shared_domains
@@ -1209,6 +1371,11 @@ def get_domain_associated_tasks(domain: str, max_occurrences_per_task: Optional[
                 ed.has_link,
                 ed.has_text,
                 ed.sample_page_url,
+                ed.risk_level,
+                ed.risk_tags,
+                ed.risk_remark,
+                ed.verify_status,
+                ed.verify_time,
                 ed.created_at
             FROM external_domains ed
             JOIN tasks t ON ed.task_id = t.id
@@ -1218,6 +1385,13 @@ def get_domain_associated_tasks(domain: str, max_occurrences_per_task: Optional[
         tasks_list = [dict(r) for r in cursor.fetchall()]
 
         for t in tasks_list:
+            raw_tags = t.get("risk_tags") or "[]"
+            if isinstance(raw_tags, str):
+                try:
+                    t["risk_tags"] = json.loads(raw_tags)
+                except Exception:
+                    t["risk_tags"] = [raw_tags] if raw_tags else []
+
             if max_occurrences_per_task is not None:
                 cursor.execute("""
                     SELECT page_url, source_type, raw_match, context_snippet, created_at
@@ -1241,15 +1415,431 @@ def get_domain_associated_tasks(domain: str, max_occurrences_per_task: Optional[
 def get_global_domains_for_export(
     search: Optional[str] = None,
     root_domain: Optional[str] = None,
+    risk_level: Optional[str] = None,
     min_tasks: Optional[int] = None
 ) -> List[dict]:
     """Export all aggregated external domains with full metadata."""
     domains, _ = list_global_external_domains(
         search=search,
         root_domain=root_domain,
+        risk_level=risk_level,
         min_tasks=min_tasks,
         limit=100000,
         offset=0
     )
     return domains
+
+
+# ==================== Domain Risk & Verification CRUD ====================
+
+def get_domain_occurrence_urls(task_id: int, domain: str, limit: int = 10) -> List[str]:
+    """Get unique occurrence page URLs for targeted remediation re-testing."""
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT page_url FROM domain_occurrences
+            WHERE task_id = ? AND domain = ?
+            LIMIT ?
+        """, (task_id, domain, limit))
+        urls = [r[0] for r in cursor.fetchall() if r[0]]
+        if not urls:
+            cursor.execute("SELECT sample_page_url FROM external_domains WHERE task_id = ? AND domain = ?", (task_id, domain))
+            row = cursor.fetchone()
+            if row and row[0]:
+                urls = [row[0]]
+        return urls
+
+
+def get_external_domain(task_id: int, domain: str) -> Optional[dict]:
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM external_domains WHERE task_id = ? AND domain = ?", (task_id, domain))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        raw_tags = item.get("risk_tags") or "[]"
+        if isinstance(raw_tags, str):
+            try:
+                item["risk_tags"] = json.loads(raw_tags)
+            except Exception:
+                item["risk_tags"] = [raw_tags] if raw_tags else []
+        return item
+
+
+def update_external_domain_risk(
+    task_id: int,
+    domain: str,
+    risk_level: str,
+    tags: Optional[List[str]] = None,
+    remark: str = '',
+    sync_to_global: bool = False,
+    match_type: str = 'root'
+) -> bool:
+    """Update risk classification for an external domain within a task, optionally syncing to global intel."""
+    with db_session() as conn:
+        cursor = conn.cursor()
+        now = now_iso()
+        tags_json = json.dumps(tags or [], ensure_ascii=False)
+        cursor.execute("""
+            UPDATE external_domains
+            SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'manual'
+            WHERE task_id = ? AND domain = ?
+        """, (risk_level, tags_json, remark, task_id, domain))
+
+        if sync_to_global:
+            cursor.execute("SELECT root_domain FROM external_domains WHERE task_id = ? AND domain = ?", (task_id, domain))
+            row = cursor.fetchone()
+            root_dom = row[0] if row else domain
+            target_profile_domain = root_dom if match_type == 'root' else domain
+
+            cursor.execute("""
+                INSERT INTO domain_risk_profiles (
+                    domain, match_type, risk_level, category, tags, source, remark, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'manual', ?, ?, ?)
+                ON CONFLICT(domain) DO UPDATE SET
+                    match_type = excluded.match_type,
+                    risk_level = excluded.risk_level,
+                    tags = excluded.tags,
+                    remark = excluded.remark,
+                    updated_at = excluded.updated_at
+            """, (target_profile_domain, match_type, risk_level, tags[0] if tags else '', tags_json, remark, now, now))
+
+            # Propagate to other tasks
+            if match_type == 'root':
+                cursor.execute("""
+                    UPDATE external_domains
+                    SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
+                    WHERE (root_domain = ? OR domain = ? OR domain LIKE ?) AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')
+                """, (risk_level, tags_json, f"继承自全局情报规则: {target_profile_domain}", target_profile_domain, target_profile_domain, f"%.{target_profile_domain}"))
+            else:
+                cursor.execute("""
+                    UPDATE external_domains
+                    SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
+                    WHERE domain = ? AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')
+                """, (risk_level, tags_json, f"继承自全局情报规则: {target_profile_domain}", target_profile_domain))
+
+        return True
+
+
+def batch_update_external_domains_risk(
+    task_id: int,
+    domains: List[str],
+    risk_level: str,
+    tags: Optional[List[str]] = None,
+    remark: str = ''
+) -> int:
+    """Batch update risk level and tags for multiple domains in a task."""
+    if not domains:
+        return 0
+    with db_session() as conn:
+        cursor = conn.cursor()
+        tags_json = json.dumps(tags or [], ensure_ascii=False)
+        placeholders = ",".join("?" for _ in domains)
+        cursor.execute(f"""
+            UPDATE external_domains
+            SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'manual'
+            WHERE task_id = ? AND domain IN ({placeholders})
+        """, [risk_level, tags_json, remark, task_id] + domains)
+        return cursor.rowcount
+
+
+def update_external_domain_verify_result(
+    task_id: int,
+    domain: str,
+    verify_status_or_dict: Any,
+    verify_time: Optional[str] = None,
+    verify_detail: Optional[str] = None
+) -> bool:
+    """Save verification / re-testing verdict and evidence details."""
+    if isinstance(verify_status_or_dict, dict):
+        status = verify_status_or_dict.get("verify_status", "verified_clean")
+        vtime = verify_status_or_dict.get("verify_time") or now_iso()
+        detail = json.dumps(verify_status_or_dict, ensure_ascii=False)
+    else:
+        status = str(verify_status_or_dict)
+        vtime = verify_time or now_iso()
+        detail = verify_detail if isinstance(verify_detail, str) else json.dumps(verify_detail or {}, ensure_ascii=False)
+
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE external_domains
+            SET verify_status = ?, verify_time = ?, verify_detail = ?
+            WHERE task_id = ? AND domain = ?
+        """, (status, vtime, detail, task_id, domain))
+        return cursor.rowcount > 0
+
+
+def evaluate_task_domains_rules(task_id: int) -> dict:
+    """Re-evaluate heuristic rules & threat intel for all un-reviewed domains in a task."""
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM domain_risk_profiles")
+        profiles = [dict(r) for r in cursor.fetchall()]
+
+        cursor.execute("SELECT id, domain, root_domain, risk_source FROM external_domains WHERE task_id = ?", (task_id,))
+        domains = cursor.fetchall()
+        updated_count = 0
+
+        for row in domains:
+            if row["risk_source"] == "manual":
+                continue
+            risk_info = evaluate_domain_risk(row["domain"], row["root_domain"], profiles)
+            cursor.execute("""
+                UPDATE external_domains
+                SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = ?
+                WHERE id = ?
+            """, (
+                risk_info["risk_level"],
+                json.dumps(risk_info["risk_tags"], ensure_ascii=False),
+                risk_info["risk_remark"],
+                risk_info["risk_source"],
+                row["id"]
+            ))
+            updated_count += 1
+
+        return {"total": len(domains), "evaluated_count": updated_count}
+
+
+# ==================== Threat Intelligence Base (domain_risk_profiles) ====================
+
+def create_risk_profile(
+    domain: str,
+    match_type: str = "root",
+    risk_level: str = "high",
+    category: str = "",
+    tags: Optional[List[str]] = None,
+    remark: str = "",
+    source: str = "manual",
+    sync_to_history: bool = True
+) -> dict:
+    """Add a new pre-configured risk domain rule and optionally sync to existing tasks."""
+    clean_domain = domain.lower().strip().lstrip("*.")
+    with db_session() as conn:
+        cursor = conn.cursor()
+        now = now_iso()
+        tags_json = json.dumps(tags or [], ensure_ascii=False)
+        cursor.execute("""
+            INSERT INTO domain_risk_profiles (
+                domain, match_type, risk_level, category, tags, source, remark, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(domain) DO UPDATE SET
+                match_type = excluded.match_type,
+                risk_level = excluded.risk_level,
+                category = excluded.category,
+                tags = excluded.tags,
+                remark = excluded.remark,
+                updated_at = excluded.updated_at
+        """, (clean_domain, match_type, risk_level, category, tags_json, source, remark, now, now))
+        profile_id = cursor.lastrowid
+
+    if sync_to_history:
+        sync_risk_profiles_to_history([clean_domain])
+
+    return get_risk_profile_by_domain(clean_domain) or {"id": profile_id, "domain": clean_domain}
+
+
+def get_risk_profile(profile_id: int) -> Optional[dict]:
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM domain_risk_profiles WHERE id = ?", (profile_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        res = dict(row)
+        try:
+            res["tags"] = json.loads(res.get("tags") or "[]")
+        except Exception:
+            res["tags"] = []
+        return res
+
+
+def get_risk_profile_by_domain(domain: str) -> Optional[dict]:
+    clean_domain = domain.lower().strip().lstrip("*.")
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM domain_risk_profiles WHERE domain = ?", (clean_domain,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        res = dict(row)
+        try:
+            res["tags"] = json.loads(res.get("tags") or "[]")
+        except Exception:
+            res["tags"] = []
+        return res
+
+
+def list_risk_profiles(
+    search: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+) -> Tuple[List[dict], int]:
+    with db_session() as conn:
+        cursor = conn.cursor()
+        where_clauses = ["1=1"]
+        params: List[Any] = []
+
+        if search:
+            where_clauses.append("(domain LIKE ? OR remark LIKE ? OR category LIKE ?)")
+            pat = f"%{search.strip()}%"
+            params.extend([pat, pat, pat])
+
+        if risk_level:
+            where_clauses.append("risk_level = ?")
+            params.append(risk_level)
+
+        where_sql = " AND ".join(where_clauses)
+        cursor.execute(f"SELECT COUNT(*) FROM domain_risk_profiles WHERE {where_sql}", params)
+        total = cursor.fetchone()[0]
+
+        cursor.execute(f"""
+            SELECT * FROM domain_risk_profiles
+            WHERE {where_sql}
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+        """, params + [limit, offset])
+
+        rows = []
+        for r in cursor.fetchall():
+            item = dict(r)
+            try:
+                item["tags"] = json.loads(item.get("tags") or "[]")
+            except Exception:
+                item["tags"] = []
+            rows.append(item)
+
+        return rows, total
+
+
+def get_all_risk_profiles() -> List[dict]:
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM domain_risk_profiles ORDER BY id ASC")
+        rows = []
+        for r in cursor.fetchall():
+            item = dict(r)
+            try:
+                item["tags"] = json.loads(item.get("tags") or "[]")
+            except Exception:
+                item["tags"] = []
+            rows.append(item)
+        return rows
+
+list_risk_profiles_for_eval = get_all_risk_profiles
+
+
+def update_risk_profile(profile_id: int, updates: dict) -> Optional[dict]:
+    with db_session() as conn:
+        cursor = conn.cursor()
+        now = now_iso()
+        fields = []
+        params = []
+        for k in ["domain", "match_type", "risk_level", "category", "remark", "source"]:
+            if k in updates:
+                fields.append(f"{k} = ?")
+                params.append(updates[k])
+        if "tags" in updates:
+            fields.append("tags = ?")
+            params.append(json.dumps(updates["tags"] or [], ensure_ascii=False))
+
+        if not fields:
+            return get_risk_profile(profile_id)
+
+        fields.append("updated_at = ?")
+        params.append(now)
+        params.append(profile_id)
+
+        cursor.execute(f"UPDATE domain_risk_profiles SET {', '.join(fields)} WHERE id = ?", params)
+
+    return get_risk_profile(profile_id)
+
+
+def delete_risk_profile(profile_id: int) -> bool:
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM domain_risk_profiles WHERE id = ?", (profile_id,))
+        return cursor.rowcount > 0
+
+
+def batch_import_risk_profiles(items: List[dict], sync_to_history: bool = True) -> int:
+    """Batch import multiple risk domain profiles."""
+    if not items:
+        return 0
+    now = now_iso()
+    imported_domains = []
+    with db_session() as conn:
+        cursor = conn.cursor()
+        for it in items:
+            dom = it.get("domain", "").lower().strip().lstrip("*.")
+            if not dom:
+                continue
+            match_type = it.get("match_type", "root")
+            risk_level = it.get("risk_level", "high")
+            category = it.get("category", "")
+            tags = it.get("tags") or []
+            remark = it.get("remark", "")
+            source = it.get("source", "import")
+
+            cursor.execute("""
+                INSERT INTO domain_risk_profiles (
+                    domain, match_type, risk_level, category, tags, source, remark, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(domain) DO UPDATE SET
+                    match_type = excluded.match_type,
+                    risk_level = excluded.risk_level,
+                    category = excluded.category,
+                    tags = excluded.tags,
+                    remark = excluded.remark,
+                    updated_at = excluded.updated_at
+            """, (dom, match_type, risk_level, category, json.dumps(tags, ensure_ascii=False), source, remark, now, now))
+            imported_domains.append(dom)
+
+    if sync_to_history and imported_domains:
+        sync_risk_profiles_to_history(imported_domains)
+
+    return len(imported_domains)
+
+
+def sync_risk_profiles_to_history(domains_filter: Optional[List[str]] = None) -> dict:
+    """
+    Retrospectively sync threat intelligence profiles to all existing tasks and external domains.
+    Runs efficiently via targeted bulk updates.
+    """
+    with db_session() as conn:
+        cursor = conn.cursor()
+        if domains_filter:
+            placeholders = ",".join("?" for _ in domains_filter)
+            cursor.execute(f"SELECT * FROM domain_risk_profiles WHERE domain IN ({placeholders})", domains_filter)
+        else:
+            cursor.execute("SELECT * FROM domain_risk_profiles")
+
+        profiles = [dict(r) for r in cursor.fetchall()]
+        total_matched = 0
+
+        for p in profiles:
+            dom = p["domain"].lower().strip().lstrip("*.")
+            match_type = p.get("match_type", "root")
+            level = p.get("risk_level", "high")
+            tags = p.get("tags") or "[]"
+            remark = p.get("remark") or f"命中预设风险情报: {dom}"
+
+            if match_type == "root":
+                cursor.execute("""
+                    UPDATE external_domains
+                    SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
+                    WHERE (root_domain = ? OR domain = ? OR domain LIKE ?) AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')
+                """, (level, tags, remark, dom, dom, f"%.{dom}"))
+            else:
+                cursor.execute("""
+                    UPDATE external_domains
+                    SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
+                    WHERE domain = ? AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')
+                """, (level, tags, remark, dom))
+            total_matched += cursor.rowcount
+
+        return {"profile_count": len(profiles), "updated_domains": total_matched}
+
 
