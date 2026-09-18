@@ -1212,7 +1212,10 @@
                                         <div>首见: {{ d.first_seen_at }}</div>
                                         <div class="text-slate-500">最近: {{ d.last_seen_at }}</div>
                                     </td>
-                                    <td class="py-3 px-4 text-right whitespace-nowrap">
+                                    <td class="py-3 px-4 text-right whitespace-nowrap space-x-1.5">
+                                        <button @click="openGlobalAssessModal(d)" class="px-2.5 py-1 bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border border-purple-500/40 rounded transition font-medium">
+                                            🏷️ 研判
+                                        </button>
                                         <button @click="openAssociatedTasksModal(d.domain)" class="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 rounded transition font-medium">
                                             🔍 任务与证据
                                         </button>
@@ -2029,6 +2032,142 @@
                 <div class="flex items-center justify-end gap-2.5 border-t border-slate-800 pt-3">
                     <button @click="showTagModal = false" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium">取消</button>
                     <button @click="saveTagForm" class="px-5 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-md shadow-purple-600/20">保存研判</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= MODAL: GLOBAL DOMAIN RISK ASSESSMENT & INTEL RULE ================= -->
+        <div v-if="showGlobalAssessModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div>
+                        <h3 class="text-base font-bold text-white flex items-center gap-2">
+                            <span>🛡️ 全局外部域名研判与情报规则</span>
+                        </h3>
+                        <p class="text-xs text-slate-400 mt-0.5">
+                            为该域名配置安全研判与情报规则，一键同步全系统所有扫描任务
+                        </p>
+                    </div>
+                    <button @click="showGlobalAssessModal = false" class="text-slate-400 hover:text-white text-lg">✕</button>
+                </div>
+
+                <div class="space-y-4 text-xs">
+                    <!-- Rule Match Scope (Root Wildcard vs Exact Domain) -->
+                    <div class="bg-slate-950/80 border border-slate-800 p-3 rounded-xl space-y-2.5">
+                        <label class="block font-semibold text-slate-300">规则匹配模式 (通配符 / 单域名)</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="p-2.5 rounded-lg border cursor-pointer flex flex-col gap-1 transition"
+                                   :class="globalAssessForm.rule_type === 'root' ? 'bg-purple-950/80 border-purple-500 text-purple-200' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'">
+                                <div class="flex items-center gap-1.5 font-bold text-xs">
+                                    <input type="radio" value="root" v-model="globalAssessForm.rule_type" @change="onGlobalAssessTypeChange" class="text-purple-500">
+                                    <span>🌐 主根域名通配</span>
+                                </div>
+                                <div class="text-[11px] text-purple-300 font-mono pl-5 truncate" :title="`*.${globalAssessTarget?.root_domain || globalAssessTarget?.domain}`">
+                                    *.{{ globalAssessTarget?.root_domain || globalAssessTarget?.domain }}
+                                </div>
+                                <div class="text-[10px] text-slate-500 pl-5">通配匹配该主域及所有层级子域名</div>
+                            </label>
+
+                            <label class="p-2.5 rounded-lg border cursor-pointer flex flex-col gap-1 transition"
+                                   :class="globalAssessForm.rule_type === 'exact' ? 'bg-purple-950/80 border-purple-500 text-purple-200' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'">
+                                <div class="flex items-center gap-1.5 font-bold text-xs">
+                                    <input type="radio" value="exact" v-model="globalAssessForm.rule_type" @change="onGlobalAssessTypeChange" class="text-purple-500">
+                                    <span>🎯 精确单域名</span>
+                                </div>
+                                <div class="text-[11px] text-purple-300 font-mono pl-5 truncate" :title="globalAssessTarget?.domain">
+                                    {{ globalAssessTarget?.domain }}
+                                </div>
+                                <div class="text-[10px] text-slate-500 pl-5">仅匹配此单个FQDN完整域名</div>
+                            </label>
+                        </div>
+
+                        <div class="flex items-center gap-2 pt-1 text-slate-300">
+                            <span class="text-slate-400 whitespace-nowrap">规则目标:</span>
+                            <input v-model="globalAssessForm.target_domain" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-sky-300 font-mono text-xs flex-1 focus:outline-none focus:border-purple-500">
+                        </div>
+                    </div>
+
+                    <!-- Risk Level Radio Buttons -->
+                    <div>
+                        <label class="block font-semibold text-slate-300 mb-2">安全风险级别评定</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="globalAssessForm.risk_level === 'critical' ? 'bg-rose-950/80 border-rose-500 text-rose-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="critical" v-model="globalAssessForm.risk_level" class="text-rose-500">
+                                <span>🔴 严重风险</span>
+                            </label>
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="globalAssessForm.risk_level === 'high' ? 'bg-red-950/80 border-red-500 text-red-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="high" v-model="globalAssessForm.risk_level" class="text-red-500">
+                                <span>🔴 高危风险</span>
+                            </label>
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="globalAssessForm.risk_level === 'medium' ? 'bg-amber-950/80 border-amber-500 text-amber-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="medium" v-model="globalAssessForm.risk_level" class="text-amber-500">
+                                <span>🟡 中危风险</span>
+                            </label>
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="globalAssessForm.risk_level === 'low' ? 'bg-blue-950/80 border-blue-500 text-blue-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="low" v-model="globalAssessForm.risk_level" class="text-blue-500">
+                                <span>🔵 低危风险</span>
+                            </label>
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="globalAssessForm.risk_level === 'safe' ? 'bg-emerald-950/80 border-emerald-500 text-emerald-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="safe" v-model="globalAssessForm.risk_level" class="text-emerald-500">
+                                <span>🟢 官方/安全</span>
+                            </label>
+                            <label class="p-2 rounded-lg border cursor-pointer flex items-center gap-1.5 transition"
+                                   :class="globalAssessForm.risk_level === 'pending' ? 'bg-slate-800 border-slate-600 text-slate-200 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'">
+                                <input type="radio" value="pending" v-model="globalAssessForm.risk_level" class="text-slate-500">
+                                <span>⚪ 待研判</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Preset Tag Pills -->
+                    <div>
+                        <label class="block font-semibold text-slate-300 mb-1.5">研判属性标签 (点击快速添加)</label>
+                        <div class="flex flex-wrap gap-1.5">
+                            <button type="button" v-for="tag in ['恶意链接', '暗链篡改', '赌博黑产', '广告追踪', 'CDN资源', '官方业务', '供应链依赖', 'API服务', '统计分析']"
+                                    :key="tag" @click="toggleGlobalAssessTag(tag)"
+                                    class="px-2 py-1 rounded-md text-[11px] transition border"
+                                    :class="globalAssessForm.tags.includes(tag) ? 'bg-purple-950 text-purple-200 border-purple-600 font-semibold' : 'bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-700'">
+                                {{ globalAssessForm.tags.includes(tag) ? '✓ ' + tag : '+ ' + tag }}
+                            </button>
+                        </div>
+                        <!-- Custom Tag Input -->
+                        <div class="flex items-center gap-2 mt-2">
+                            <input v-model="globalAssessForm.customTag" @keyup.enter="addGlobalAssessCustomTag" placeholder="自定义标签名称..."
+                                   class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-200 text-xs flex-1 focus:outline-none focus:border-purple-500">
+                            <button type="button" @click="addGlobalAssessCustomTag" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700">添加</button>
+                        </div>
+                    </div>
+
+                    <!-- Remark -->
+                    <div>
+                        <label class="block font-semibold text-slate-300 mb-1">研判说明与处置依据</label>
+                        <textarea v-model="globalAssessForm.remark" rows="2" placeholder="说明研判依据，例如：属于跨任务公共CDN静态服务，或泛滥暗链赌博黑产域名..."
+                                  class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-slate-200 text-xs focus:outline-none focus:border-purple-500"></textarea>
+                    </div>
+
+                    <!-- Sync to History Checkbox -->
+                    <div class="bg-purple-950/30 border border-purple-800/40 p-3 rounded-xl">
+                        <label class="flex items-center gap-2 text-purple-200 font-semibold cursor-pointer">
+                            <input type="checkbox" v-model="globalAssessForm.sync_to_history" class="rounded bg-slate-900 border-purple-700 text-purple-500">
+                            <span>立即回溯同步全库历史任务 (推荐)</span>
+                        </label>
+                        <p class="text-[11px] text-slate-400 pl-6 mt-1">
+                            勾选后将自动更新系统中所有历史任务中命中该规则的外部域名，并直接刷新全局总库统计态势。
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-end gap-2.5 border-t border-slate-800 pt-3">
+                    <button @click="showGlobalAssessModal = false" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium">取消</button>
+                    <button @click="saveGlobalAssessForm" :disabled="savingGlobalAssess" class="px-5 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-semibold text-xs shadow-md shadow-purple-600/20 flex items-center gap-1.5">
+                        <span v-if="savingGlobalAssess">保存同步中...</span>
+                        <span v-else>保存并应用规则</span>
+                    </button>
                 </div>
             </div>
         </div>

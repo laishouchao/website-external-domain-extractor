@@ -1828,16 +1828,22 @@ def sync_risk_profiles_to_history(domains_filter: Optional[List[str]] = None) ->
             remark = p.get("remark") or f"命中预设风险情报: {dom}"
 
             if match_type == "root":
-                cursor.execute("""
+                where_clause = "(root_domain = ? OR domain = ? OR domain LIKE ?)"
+                if not domains_filter:
+                    where_clause += " AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')"
+                cursor.execute(f"""
                     UPDATE external_domains
                     SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
-                    WHERE (root_domain = ? OR domain = ? OR domain LIKE ?) AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')
+                    WHERE {where_clause}
                 """, (level, tags, remark, dom, dom, f"%.{dom}"))
             else:
-                cursor.execute("""
+                where_clause = "domain = ?"
+                if not domains_filter:
+                    where_clause += " AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')"
+                cursor.execute(f"""
                     UPDATE external_domains
                     SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
-                    WHERE domain = ? AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')
+                    WHERE {where_clause}
                 """, (level, tags, remark, dom))
             total_matched += cursor.rowcount
 

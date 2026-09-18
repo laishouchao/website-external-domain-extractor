@@ -115,6 +115,20 @@ const app = createApp({
             match_type: 'root'
         });
 
+        // Global External Domains Assessment Modal State
+        const showGlobalAssessModal = ref(false);
+        const globalAssessTarget = ref(null);
+        const savingGlobalAssess = ref(false);
+        const globalAssessForm = ref({
+            rule_type: 'root',
+            target_domain: '',
+            risk_level: 'high',
+            tags: [],
+            customTag: '',
+            remark: '',
+            sync_to_history: true
+        });
+
         // Targeted Verification Modal State & Loading Maps
         const showVerifyModal = ref(false);
         const verifyVerdict = ref(null);
@@ -1033,6 +1047,93 @@ const app = createApp({
             }
         };
 
+        // Global Domain Assessment & Rule Creation
+        const openGlobalAssessModal = (domainItem) => {
+            if (!domainItem) return;
+            globalAssessTarget.value = domainItem;
+            const defaultTarget = domainItem.root_domain || domainItem.domain;
+            globalAssessForm.value = {
+                rule_type: 'root',
+                target_domain: defaultTarget,
+                risk_level: domainItem.risk_level && domainItem.risk_level !== 'pending' ? domainItem.risk_level : 'high',
+                tags: Array.isArray(domainItem.risk_tags) ? [...domainItem.risk_tags] : [],
+                customTag: '',
+                remark: domainItem.risk_remark || '',
+                sync_to_history: true
+            };
+            showGlobalAssessModal.value = true;
+        };
+
+        const onGlobalAssessTypeChange = () => {
+            if (!globalAssessTarget.value) return;
+            if (globalAssessForm.value.rule_type === 'root') {
+                globalAssessForm.value.target_domain = globalAssessTarget.value.root_domain || globalAssessTarget.value.domain;
+            } else {
+                globalAssessForm.value.target_domain = globalAssessTarget.value.domain;
+            }
+        };
+
+        const toggleGlobalAssessTag = (tagName) => {
+            const idx = globalAssessForm.value.tags.indexOf(tagName);
+            if (idx >= 0) {
+                globalAssessForm.value.tags.splice(idx, 1);
+            } else {
+                globalAssessForm.value.tags.push(tagName);
+            }
+        };
+
+        const addGlobalAssessCustomTag = () => {
+            const t = (globalAssessForm.value.customTag || '').trim();
+            if (t && !globalAssessForm.value.tags.includes(t)) {
+                globalAssessForm.value.tags.push(t);
+                globalAssessForm.value.customTag = '';
+            }
+        };
+
+        const saveGlobalAssessForm = async () => {
+            if (!globalAssessTarget.value || !globalAssessForm.value.target_domain.trim()) {
+                alert("规则目标域名不能为空");
+                return;
+            }
+            savingGlobalAssess.value = true;
+            try {
+                const payload = {
+                    domain: globalAssessForm.value.target_domain.trim(),
+                    match_type: globalAssessForm.value.rule_type,
+                    risk_level: globalAssessForm.value.risk_level,
+                    category: globalAssessForm.value.tags[0] || "",
+                    tags: globalAssessForm.value.tags,
+                    remark: globalAssessForm.value.remark.trim(),
+                    sync_to_history: Boolean(globalAssessForm.value.sync_to_history)
+                };
+                const res = await fetch('/api/risk-profiles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    showGlobalAssessModal.value = false;
+                    await loadGlobalDomains(globalDomainPage.value);
+                    await loadGlobalDomainStats();
+                    const modeDesc = payload.match_type === 'root' ? `*.${payload.domain}` : payload.domain;
+                    alert(`研判情报规则已成功创建并生效！\n规则目标: ${modeDesc}\n风险级别: ${payload.risk_level}${payload.sync_to_history ? '\n已自动回溯同步全系统历史任务。' : ''}`);
+                } else {
+                    let errMsg = "未知错误";
+                    try {
+                        const err = await res.json();
+                        errMsg = err.detail || JSON.stringify(err);
+                    } catch {
+                        errMsg = await res.text() || res.statusText;
+                    }
+                    alert("保存研判规则失败: " + errMsg);
+                }
+            } catch (e) {
+                alert("保存研判规则异常: " + e.message);
+            } finally {
+                savingGlobalAssess.value = false;
+            }
+        };
+
         // Targeted Remediation Verification
         const verifySingleDomain = async (domain) => {
             if (!activeTask.value) return;
@@ -1467,6 +1568,15 @@ const app = createApp({
             globalDomainPage,
             globalDomainFilters,
             globalDomainStats,
+            showGlobalAssessModal,
+            globalAssessTarget,
+            savingGlobalAssess,
+            globalAssessForm,
+            openGlobalAssessModal,
+            onGlobalAssessTypeChange,
+            toggleGlobalAssessTag,
+            addGlobalAssessCustomTag,
+            saveGlobalAssessForm,
             showAssociatedTasksModal,
             selectedDomainForTasks,
             associatedTasksList,
