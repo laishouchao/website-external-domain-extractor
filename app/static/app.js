@@ -137,6 +137,12 @@ const app = createApp({
         const batchVerifying = ref(false);
         const evaluatingRules = ref(false);
 
+        // Evidence & Global Modal Verification State
+        const selectedDomainEvidenceItem = ref(null);
+        const isVerifyingModalEvidence = ref(false);
+        const selectedDomainForTasksItem = ref(null);
+        const isVerifyingGlobalTasks = ref(false);
+
         // Global Threat Intelligence Profiles Modal State
         const showRiskProfilesModal = ref(false);
         const riskProfiles = ref([]);
@@ -769,9 +775,44 @@ const app = createApp({
         };
 
 
-        const openEvidenceModal = async (domain) => {
+        const isRiskDomain = (level) => {
+            if (!level) return false;
+            const l = String(level).toLowerCase().trim();
+            return ['critical', 'high', 'medium', 'low'].includes(l);
+        };
+
+        const getRiskBadgeClass = (level) => {
+            const map = {
+                critical: 'bg-rose-950 text-rose-300 border-rose-800/80 font-bold',
+                high: 'bg-red-950 text-red-300 border-red-800/80 font-semibold',
+                medium: 'bg-amber-950 text-amber-300 border-amber-800/80 font-semibold',
+                low: 'bg-blue-950 text-blue-300 border-blue-800/80',
+                safe: 'bg-emerald-950 text-emerald-300 border-emerald-800/80',
+                pending: 'bg-slate-800 text-slate-400 border-slate-700'
+            };
+            return map[level] || 'bg-slate-800 text-slate-400 border-slate-700';
+        };
+
+        const getRiskLevelLabel = (level) => {
+            const map = {
+                critical: '🔴 严重',
+                high: '🔴 高危',
+                medium: '🟡 中危',
+                low: '🔵 低危',
+                safe: '🟢 安全',
+                pending: '⚪ 待研判'
+            };
+            return map[level] || '⚪ 待研判';
+        };
+
+        const openEvidenceModal = async (domain, domainItem = null) => {
             if (!activeTask.value) return;
             selectedDomainForEvidence.value = domain;
+            if (domainItem) {
+                selectedDomainEvidenceItem.value = domainItem;
+            } else {
+                selectedDomainEvidenceItem.value = domainsList.value.find(d => d.domain === domain) || null;
+            }
             domainOccurrences.value = [];
             showEvidenceModal.value = true;
 
@@ -779,10 +820,81 @@ const app = createApp({
                 const res = await fetch(`/api/tasks/${activeTask.value.id}/domains/${encodeURIComponent(domain)}/occurrences?limit=50`);
                 if (res.ok) {
                     const data = await res.json();
-                    domainOccurrences.value = data.occurrences || [];
+                    domainOccurrences.value = (data.occurrences || []).map(o => ({
+                        ...o,
+                        _verifying: false,
+                        verify_status: null
+                    }));
                 }
             } catch (e) {
                 console.error(e);
+            }
+        };
+
+        const verifySingleOccurrence = async (occ) => {
+            if (!activeTask.value || !selectedDomainForEvidence.value || !occ.page_url) return;
+            occ._verifying = true;
+            try {
+                const res = await fetch(`/api/tasks/${activeTask.value.id}/domains/${encodeURIComponent(selectedDomainForEvidence.value)}/verify-page?url=${encodeURIComponent(occ.page_url)}`, {
+                    method: 'POST'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.result) {
+                        occ.verify_status = data.result.status;
+                    }
+                } else {
+                    let errMsg = "复测失败";
+                    try { const err = await res.json(); errMsg = err.detail || JSON.stringify(err); } catch {}
+                    alert("复测失败: " + errMsg);
+                }
+            } catch (e) {
+                alert("复测异常: " + e.message);
+            } finally {
+                occ._verifying = false;
+            }
+        };
+
+        const verifyAllModalOccurrences = async () => {
+            if (!activeTask.value || !selectedDomainForEvidence.value) return;
+            isVerifyingModalEvidence.value = true;
+            try {
+                const res = await fetch(`/api/tasks/${activeTask.value.id}/domains/${encodeURIComponent(selectedDomainForEvidence.value)}/verify`, {
+                    method: 'POST'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const verdict = data.verdict;
+                    if (verdict && Array.isArray(verdict.details)) {
+                        const detailMap = {};
+                        verdict.details.forEach(d => {
+                            if (d.url) detailMap[d.url] = d.status;
+                        });
+                        domainOccurrences.value.forEach(occ => {
+                            if (detailMap[occ.page_url]) {
+                                occ.verify_status = detailMap[occ.page_url];
+                            } else if (verdict.verify_status === 'verified_clean') {
+                                occ.verify_status = 'domain_cleared';
+                            }
+                        });
+                    }
+                    const item = domainsList.value.find(d => d.domain === selectedDomainForEvidence.value);
+                    if (item && verdict) {
+                        item.verify_status = verdict.verify_status;
+                        item.verify_time = verdict.verify_time;
+                        item.verify_detail = JSON.stringify(verdict);
+                    }
+                    await loadDomainStats();
+                    showVerifyReport(verdict, selectedDomainForEvidence.value);
+                } else {
+                    let errMsg = "一键复测失败";
+                    try { const err = await res.json(); errMsg = err.detail || JSON.stringify(err); } catch {}
+                    alert("一键复测失败: " + errMsg);
+                }
+            } catch (e) {
+                alert("一键复测异常: " + e.message);
+            } finally {
+                isVerifyingModalEvidence.value = false;
             }
         };
 
@@ -927,8 +1039,13 @@ const app = createApp({
             }
         };
 
-        const openAssociatedTasksModal = async (domain) => {
+        const openAssociatedTasksModal = async (domain, domainItem = null) => {
             selectedDomainForTasks.value = domain;
+            if (domainItem) {
+                selectedDomainForTasksItem.value = domainItem;
+            } else {
+                selectedDomainForTasksItem.value = globalDomainsList.value.find(d => d.domain === domain) || null;
+            }
             associatedTasksList.value = [];
             isLoadingAssociatedTasks.value = true;
             showAssociatedTasksModal.value = true;
@@ -943,6 +1060,44 @@ const app = createApp({
                 console.error("Failed to load associated tasks:", e);
             } finally {
                 isLoadingAssociatedTasks.value = false;
+            }
+        };
+
+        const verifyGlobalAssociatedTasks = async () => {
+            if (!selectedDomainForTasks.value) return;
+            isVerifyingGlobalTasks.value = true;
+            try {
+                const res = await fetch(`/api/global-domains/${encodeURIComponent(selectedDomainForTasks.value)}/verify`, {
+                    method: 'POST'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data.tasks)) {
+                        const taskResultMap = {};
+                        data.tasks.forEach(t => {
+                            taskResultMap[t.task_id] = t;
+                        });
+                        associatedTasksList.value.forEach(t => {
+                            const match = taskResultMap[t.task_id];
+                            if (match) {
+                                t.verify_progress = match.progress_text;
+                                t.verify_status = match.verify_status;
+                                t.verify_time = match.verify_time;
+                            }
+                        });
+                    }
+                    await loadGlobalDomains(globalDomainPage.value);
+                    await loadGlobalDomainStats();
+                    alert(`全库复测完成！已核验 ${data.task_count || associatedTasksList.value.length} 个扫描任务的闭环修复情况。`);
+                } else {
+                    let errMsg = "全库复测失败";
+                    try { const err = await res.json(); errMsg = err.detail || JSON.stringify(err); } catch {}
+                    alert("全库复测失败: " + errMsg);
+                }
+            } catch (e) {
+                alert("全库复测异常: " + e.message);
+            } finally {
+                isVerifyingGlobalTasks.value = false;
             }
         };
 
@@ -1540,6 +1695,16 @@ const app = createApp({
             showVerifyReport,
             batchVerifySelected,
             batchSetRisk,
+            isRiskDomain,
+            getRiskBadgeClass,
+            getRiskLevelLabel,
+            selectedDomainEvidenceItem,
+            isVerifyingModalEvidence,
+            selectedDomainForTasksItem,
+            isVerifyingGlobalTasks,
+            verifySingleOccurrence,
+            verifyAllModalOccurrences,
+            verifyGlobalAssociatedTasks,
             evaluateRulesForTask,
             filterByRisk,
             filterByVerify,

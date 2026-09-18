@@ -153,6 +153,55 @@ def export_domain_associated_tasks_json(domain: str):
     )
 
 
+@router.post("/{domain}/verify")
+async def verify_global_domain_api(domain: str):
+    """
+    Verify remediation status across all tasks that contain this external domain.
+    Returns per-task verify progress and updates persistent verify status.
+    """
+    tasks = crud.get_domain_associated_tasks(domain, max_occurrences_per_task=None)
+    if not tasks:
+        raise HTTPException(status_code=404, detail="未找到该域名的关联扫描任务")
+
+    from app.crawler.risk_engine import verify_domain_remediation
+
+    results = []
+    for t in tasks:
+        tid = t["task_id"]
+        urls = [occ["page_url"] for occ in t.get("occurrences", []) if occ.get("page_url")]
+        if not urls and t.get("sample_page_url"):
+            urls = [t["sample_page_url"]]
+
+        verdict = await verify_domain_remediation(domain, urls)
+        crud.update_external_domain_verify_result(
+            task_id=tid,
+            domain=domain,
+            verify_status=verdict["verify_status"],
+            verify_time=verdict["verify_time"],
+            verify_detail=json.dumps(verdict, ensure_ascii=False)
+        )
+        total = verdict.get("total_pages", len(urls))
+        cleared = verdict.get("cleared_count", 0)
+        still_present = verdict.get("still_present_count", 0)
+        results.append({
+            "task_id": tid,
+            "task_name": t.get("task_name", f"任务 #{tid}"),
+            "total_pages": total,
+            "cleared_count": cleared,
+            "still_present_count": still_present,
+            "progress_text": f"{cleared}/{total}",
+            "verify_status": verdict["verify_status"],
+            "verify_time": verdict["verify_time"]
+        })
+
+    return {
+        "success": True,
+        "domain": domain,
+        "task_count": len(results),
+        "tasks": results
+    }
+
+
 @router.get("/export/txt")
 def export_global_domains_txt(
     search: Optional[str] = Query(None),

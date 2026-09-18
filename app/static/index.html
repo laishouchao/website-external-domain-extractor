@@ -593,21 +593,20 @@
                                                     <span>🟢 已修复</span>
                                                     <span class="text-[10px] text-teal-400">报告 ↗</span>
                                                 </button>
-                                                <button @click="verifySingleDomain(d.domain)" :disabled="verifyingMap[d.domain]" class="text-slate-500 hover:text-slate-300 text-[11px]" title="重新复测">🔄</button>
                                             </div>
                                             <div v-else-if="d.verify_status === 'verified_failed'" class="flex items-center gap-1.5">
                                                 <button @click="showVerifyReport(d)" class="px-2 py-0.5 rounded bg-rose-950 border border-rose-800 text-rose-300 text-xs font-bold hover:bg-rose-900 transition flex items-center gap-1" title="点击查看存留代码证据">
                                                     <span>🔴 未修复</span>
                                                     <span class="text-[10px] text-rose-400">存留 ↗</span>
                                                 </button>
-                                                <button @click="verifySingleDomain(d.domain)" :disabled="verifyingMap[d.domain]" class="text-slate-500 hover:text-slate-300 text-[11px]" title="重新复测">🔄</button>
                                             </div>
                                             <div v-else>
-                                                <button @click="verifySingleDomain(d.domain)" :disabled="verifyingMap[d.domain]" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded transition font-medium text-xs flex items-center gap-1">
-                                                    <span v-if="verifyingMap[d.domain]" class="animate-spin">⏳</span>
-                                                    <span v-else>🔍</span>
-                                                    <span>验证修复</span>
-                                                </button>
+                                                <span v-if="isRiskDomain(d.risk_level)" class="text-slate-500 text-xs font-mono">
+                                                    ⚪ 未复测
+                                                </span>
+                                                <span v-else class="text-slate-600 text-xs">
+                                                    -
+                                                </span>
                                             </div>
                                         </td>
 
@@ -634,7 +633,7 @@
                                             <button @click="openTagModal(d)" class="px-2.5 py-1 bg-slate-800 hover:bg-purple-950 hover:text-purple-300 border border-slate-700 hover:border-purple-800 rounded transition font-medium text-xs">
                                                 🏷️ 研判
                                             </button>
-                                            <button @click="openEvidenceModal(d.domain)" class="px-2.5 py-1 bg-slate-800 hover:bg-sky-950 hover:text-sky-300 border border-slate-700 hover:border-sky-800 rounded transition font-medium text-xs">
+                                            <button @click="openEvidenceModal(d.domain, d)" class="px-2.5 py-1 bg-slate-800 hover:bg-sky-950 hover:text-sky-300 border border-slate-700 hover:border-sky-800 rounded transition font-medium text-xs">
                                                 🔍 证据
                                             </button>
                                         </td>
@@ -765,7 +764,7 @@
                                             {{ s.sample_page_url }}
                                         </td>
                                         <td class="py-2.5 px-4 text-right whitespace-nowrap">
-                                            <button @click="openEvidenceModal(s.subdomain)" class="px-2.5 py-1 bg-slate-800 hover:bg-purple-950 hover:text-purple-300 border border-slate-700 hover:border-purple-800 rounded transition font-medium">
+                                            <button @click="openEvidenceModal(s.subdomain, s)" class="px-2.5 py-1 bg-slate-800 hover:bg-purple-950 hover:text-purple-300 border border-slate-700 hover:border-purple-800 rounded transition font-medium">
                                                 🔍 查看证据
                                             </button>
                                         </td>
@@ -1194,7 +1193,7 @@
                                         <span class="px-2.5 py-1 rounded-full bg-slate-800 text-amber-300 font-semibold">{{ d.total_occurrences }} 次</span>
                                     </td>
                                     <td class="py-3 px-4 whitespace-nowrap">
-                                        <button @click="openAssociatedTasksModal(d.domain)" class="px-2.5 py-1 rounded-md text-xs font-medium transition flex items-center gap-1.5 border"
+                                        <button @click="openAssociatedTasksModal(d.domain, d)" class="px-2.5 py-1 rounded-md text-xs font-medium transition flex items-center gap-1.5 border"
                                                 :class="d.task_count >= 2 ? 'bg-purple-950/80 border-purple-800/60 text-purple-300 hover:bg-purple-900/60' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'">
                                             <span>📑 {{ d.task_count }} 个任务</span>
                                             <span v-if="d.task_count >= 2" class="px-1 py-0.2 rounded bg-purple-900 text-purple-200 text-[10px]">跨任务</span>
@@ -1216,7 +1215,7 @@
                                         <button @click="openGlobalAssessModal(d)" class="px-2.5 py-1 bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border border-purple-500/40 rounded transition font-medium">
                                             🏷️ 研判
                                         </button>
-                                        <button @click="openAssociatedTasksModal(d.domain)" class="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 rounded transition font-medium">
+                                        <button @click="openAssociatedTasksModal(d.domain, d)" class="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 rounded transition font-medium">
                                             🔍 任务与证据
                                         </button>
                                     </td>
@@ -1513,10 +1512,25 @@
                     <div class="min-w-0 flex-1">
                         <h3 class="text-base font-bold text-white flex items-center gap-2">
                             <span>🔍 域名 / 子域名溯源与证据明细</span>
+                            <span v-if="selectedDomainEvidenceItem?.risk_level"
+                                  :class="getRiskBadgeClass(selectedDomainEvidenceItem.risk_level)"
+                                  class="px-2 py-0.5 rounded text-xs font-semibold border">
+                                {{ getRiskLevelLabel(selectedDomainEvidenceItem.risk_level) }}
+                            </span>
                         </h3>
                         <p class="text-xs text-sky-400 font-mono mt-0.5 truncate" :title="selectedDomainForEvidence">{{ selectedDomainForEvidence }}</p>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
+                        <!-- 一键验证修复情况按钮 (仅在存在风险的域名显示) -->
+                        <button v-if="isRiskDomain(selectedDomainEvidenceItem?.risk_level)"
+                                @click="verifyAllModalOccurrences"
+                                :disabled="isVerifyingModalEvidence"
+                                class="px-2.5 py-1.5 bg-teal-600/20 hover:bg-teal-600/40 text-teal-300 border border-teal-500/40 rounded-lg text-xs transition flex items-center gap-1.5 font-medium shadow-sm disabled:opacity-50"
+                                title="并发测试该弹窗包含的所有证据记录的修复情况">
+                            <span v-if="isVerifyingModalEvidence" class="animate-spin">🌀</span>
+                            <span v-else>🛡️</span>
+                            <span>{{ isVerifyingModalEvidence ? '正在全量复测...' : '一键验证修复情况' }}</span>
+                        </button>
                         <a v-if="activeTask && selectedDomainForEvidence"
                            :href="`/api/tasks/${activeTask.id}/domains/${encodeURIComponent(selectedDomainForEvidence)}/occurrences/export/csv`"
                            download
@@ -1541,12 +1555,37 @@
                     </div>
                     <div v-for="(occ, idx) in domainOccurrences" :key="idx"
                          class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2">
-                        <div class="flex items-center justify-between">
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
                             <span :class="occ.source_type.startsWith('link') ? 'bg-emerald-950 text-emerald-300 border-emerald-800/40' : 'bg-cyan-950 text-cyan-300 border-cyan-800/40'"
                                   class="px-2 py-0.5 rounded border font-mono text-[11px]">
                                 {{ occ.source_type }}
                             </span>
-                            <span class="text-slate-500 font-mono">{{ occ.created_at }}</span>
+                            <div class="flex items-center gap-2">
+                                <span class="text-slate-500 font-mono">{{ occ.created_at }}</span>
+                                <!-- 单条记录验证修复按钮与状态 (仅在存在风险的域名显示) -->
+                                <template v-if="isRiskDomain(selectedDomainEvidenceItem?.risk_level)">
+                                    <span v-if="occ.verify_status === 'domain_cleared' || occ.verify_status === 'page_removed'"
+                                          class="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800/80 text-emerald-300 text-xs font-semibold flex items-center gap-1">
+                                        🟢 已清除
+                                    </span>
+                                    <span v-else-if="occ.verify_status === 'domain_still_present'"
+                                          class="px-2 py-0.5 rounded bg-rose-950 border border-rose-800/80 text-rose-300 text-xs font-semibold flex items-center gap-1">
+                                        🔴 仍存留
+                                    </span>
+                                    <span v-else-if="occ.verify_status === 'error'"
+                                          class="px-2 py-0.5 rounded bg-amber-950 border border-amber-800/80 text-amber-300 text-xs font-semibold flex items-center gap-1">
+                                        ⚠️ 复测异常
+                                    </span>
+                                    <button @click="verifySingleOccurrence(occ)"
+                                            :disabled="occ._verifying"
+                                            class="px-2 py-0.5 rounded bg-teal-950/80 border border-teal-800/80 text-teal-300 hover:bg-teal-900 text-xs font-medium transition flex items-center gap-1 disabled:opacity-50"
+                                            :title="occ.verify_status ? '重新验证此条记录修复情况' : '单独校验该记录的修复闭环情况'">
+                                        <span v-if="occ._verifying" class="animate-spin">🌀</span>
+                                        <span v-else>🔄</span>
+                                        <span>{{ occ._verifying ? '核验中...' : (occ.verify_status ? '重新复测' : '验证修复') }}</span>
+                                    </button>
+                                </template>
+                            </div>
                         </div>
                         <div>
                             <span class="text-slate-400">发现于页面: </span>
@@ -1591,6 +1630,11 @@
                     <div class="min-w-0 flex-1">
                         <h3 class="text-base font-bold text-white flex items-center gap-2">
                             <span>🌐 外部域名关联任务与代码证据溯源</span>
+                            <span v-if="selectedDomainForTasksItem?.risk_level"
+                                  :class="getRiskBadgeClass(selectedDomainForTasksItem.risk_level)"
+                                  class="px-2 py-0.5 rounded text-xs font-semibold border">
+                                {{ getRiskLevelLabel(selectedDomainForTasksItem.risk_level) }}
+                            </span>
                         </h3>
                         <p class="text-xs text-sky-400 font-mono mt-0.5 flex items-center gap-2 truncate">
                             <span class="font-bold">{{ selectedDomainForTasks }}</span>
@@ -1600,6 +1644,16 @@
                         </p>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
+                        <!-- 一键验证修复情况按钮 (仅在存在风险的域名显示) -->
+                        <button v-if="isRiskDomain(selectedDomainForTasksItem?.risk_level)"
+                                @click="verifyGlobalAssociatedTasks"
+                                :disabled="isVerifyingGlobalTasks"
+                                class="px-2.5 py-1.5 bg-teal-600/20 hover:bg-teal-600/40 text-teal-300 border border-teal-500/40 rounded-lg text-xs transition flex items-center gap-1.5 font-medium shadow-sm disabled:opacity-50"
+                                title="自动测试所有关联任务中该域名的闭环修复情况">
+                            <span v-if="isVerifyingGlobalTasks" class="animate-spin">🌀</span>
+                            <span v-else>🛡️</span>
+                            <span>{{ isVerifyingGlobalTasks ? '正在测试全库任务...' : '一键验证修复情况' }}</span>
+                        </button>
                         <a v-if="selectedDomainForTasks"
                            :href="`/api/global-domains/${encodeURIComponent(selectedDomainForTasks)}/tasks/export/csv`"
                            download
@@ -1630,10 +1684,18 @@
                          class="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3 hover:border-slate-700 transition">
                         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-900 pb-2.5">
                             <div>
-                                <div class="flex items-center gap-2">
+                                <div class="flex items-center gap-2 flex-wrap">
                                     <span class="font-bold text-slate-200 text-sm">#{{ t.task_id }} {{ t.task_name }}</span>
                                     <span :class="getStatusBadgeClass(t.task_status)" class="px-2 py-0.5 rounded text-[11px] font-semibold border">
                                         {{ getStatusLabel(t.task_status) }}
+                                    </span>
+                                    <!-- 修复进度显示: 如 10个修复了3个，就是 3/10 -->
+                                    <span v-if="t.verify_progress"
+                                          :class="t.verify_status === 'verified_clean' ? 'bg-emerald-950 text-emerald-300 border-emerald-800/80' : 'bg-rose-950 text-rose-300 border-rose-800/80'"
+                                          class="px-2 py-0.5 rounded text-xs font-mono font-semibold border flex items-center gap-1"
+                                          :title="`该任务修复进度: ${t.verify_progress} (已清除页面/总涉险页面)`">
+                                        <span>🛡️ 修复进度:</span>
+                                        <span class="font-bold">{{ t.verify_progress }}</span>
                                     </span>
                                 </div>
                                 <div class="text-slate-500 font-mono text-[11px] mt-0.5">

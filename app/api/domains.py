@@ -228,6 +228,25 @@ async def verify_domain_remediation_api(task_id: int, domain: str):
     return {"success": True, "domain": domain, "verdict": verdict}
 
 
+@router.post("/{domain}/verify-page")
+async def verify_domain_page_api(task_id: int, domain: str, url: str = Query(..., description="要复测的网页完整 URL")):
+    """
+    Verify remediation for a single occurrence page of a domain.
+    """
+    task = crud.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    import httpx
+    from app.crawler.risk_engine import verify_page_for_domain
+
+    limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
+    async with httpx.AsyncClient(limits=limits, timeout=10.0, follow_redirects=True, verify=False) as client:
+        page_result = await verify_page_for_domain(client, url, domain)
+
+    return {"success": True, "domain": domain, "result": page_result}
+
+
 @router.post("/batch-verify")
 async def batch_verify_domains_api(task_id: int, req: BatchVerifyRequest):
     """Batch verify remediation status for a list of domains."""

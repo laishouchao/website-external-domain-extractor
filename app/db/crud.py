@@ -1376,6 +1376,7 @@ def get_domain_associated_tasks(domain: str, max_occurrences_per_task: Optional[
                 ed.risk_remark,
                 ed.verify_status,
                 ed.verify_time,
+                ed.verify_detail,
                 ed.created_at
             FROM external_domains ed
             JOIN tasks t ON ed.task_id = t.id
@@ -1391,6 +1392,18 @@ def get_domain_associated_tasks(domain: str, max_occurrences_per_task: Optional[
                     t["risk_tags"] = json.loads(raw_tags)
                 except Exception:
                     t["risk_tags"] = [raw_tags] if raw_tags else []
+
+            # Compute verify progress from verify_detail if available
+            t["verify_progress"] = ""
+            if t.get("verify_detail"):
+                try:
+                    vdetail = json.loads(t["verify_detail"]) if isinstance(t["verify_detail"], str) else t["verify_detail"]
+                    total_pages = vdetail.get("total_pages", 0)
+                    cleared_pages = vdetail.get("cleared_count", 0)
+                    if total_pages > 0:
+                        t["verify_progress"] = f"{cleared_pages}/{total_pages}"
+                except Exception:
+                    pass
 
             if max_occurrences_per_task is not None:
                 cursor.execute("""
