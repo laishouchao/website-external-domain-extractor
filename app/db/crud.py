@@ -1547,17 +1547,18 @@ def batch_update_external_domains_risk(
 def update_external_domain_verify_result(
     task_id: int,
     domain: str,
-    verify_status_or_dict: Any,
+    verify_status: Any = None,
     verify_time: Optional[str] = None,
-    verify_detail: Optional[str] = None
+    verify_detail: Optional[str] = None,
+    **kwargs
 ) -> bool:
     """Save verification / re-testing verdict and evidence details."""
-    if isinstance(verify_status_or_dict, dict):
-        status = verify_status_or_dict.get("verify_status", "verified_clean")
-        vtime = verify_status_or_dict.get("verify_time") or now_iso()
-        detail = json.dumps(verify_status_or_dict, ensure_ascii=False)
+    if isinstance(verify_status, dict):
+        status = verify_status.get("verify_status", "verified_clean")
+        vtime = verify_status.get("verify_time") or now_iso()
+        detail = json.dumps(verify_status, ensure_ascii=False)
     else:
-        status = str(verify_status_or_dict)
+        status = str(verify_status or "unverified")
         vtime = verify_time or now_iso()
         detail = verify_detail if isinstance(verify_detail, str) else json.dumps(verify_detail or {}, ensure_ascii=False)
 

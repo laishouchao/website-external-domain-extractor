@@ -2,7 +2,7 @@ import io
 import csv
 import json
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Response
 from app.db import crud
 

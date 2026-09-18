@@ -7,30 +7,22 @@ from typing import Dict, List, Optional, Tuple, Any
 
 # Safe / trusted CDN, cloud vendors, and authority infrastructure roots
 SAFE_CDN_ROOTS = {
-    "cloudflare.com", "cdnjs.cloudflare.com", "jsdelivr.net", "unpkg.com",
-    "bootcdn.net", "staticfile.org", "w3.org", "schema.org",
+    # Public CDNs & Libraries
+    "cloudflare.com", "cdnjs.cloudflare.com", "jsdelivr.net", "jsdelivr.com", "unpkg.com",
+    "bootcdn.net", "staticfile.org", "w3.org", "schema.org", "bootstrapcdn.com",
+    "fontawesome.com", "jquery.com", "polyfill.io", "cdnjs.com",
+    # Mainstream Cloud & Big Tech
     "baidu.com", "bdstatic.com", "qq.com", "gtimg.com", "tencent.com",
     "aliyun.com", "aliyuncs.com", "alicdn.com", "taobao.com", "tmall.com",
     "google.com", "gstatic.com", "googleapis.com", "google-analytics.com", "googletagmanager.com",
     "microsoft.com", "apple.com", "github.com", "githubusercontent.com",
-    "weibo.com", "sina.com.cn", "jd.com", "amazon.com", "amazonaws.com"
+    "weibo.com", "sina.com.cn", "jd.com", "amazon.com", "amazonaws.com",
+    "huaweicloud.com", "myhuaweicloud.com", "volcengine.com", "volccdn.com",
+    "qiniu.com", "qiniucdn.com", "upyun.com", "bytedance.com", "douyin.com",
+    # Official compliance & authority services in China
+    "miit.gov.cn", "beian.miit.gov.cn", "conac.cn", "bszs.conac.cn",
+    "12377.cn", "12321.cn", "mps.gov.cn", "gov.cn"
 }
-
-# Abuse-prone / free / throwaway TLDs often seen in spam/malware/throwaway campaigns
-SUSPICIOUS_TLDS = {
-    "tk", "ml", "ga", "cf", "gq", "top", "buzz", "work", "fit", "loan",
-    "rest", "hair", "beauty", "click"
-}
-
-# Dynamic DNS and tunneling services
-DDNS_TUNNEL_DOMAINS = {
-    "ngrok.io", "ngrok-free.app", "duckdns.org", "ddns.net", "no-ip.org",
-    "no-ip.com", "cpolar.top", "localtunnel.me", "serveo.net", "dynu.net",
-    "hopto.org", "zapto.org"
-}
-
-IPV4_REGEX = re.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?$')
-IPV6_REGEX = re.compile(r'^\[?[0-9a-fA-F:]+\]?(?::\d+)?$')
 
 
 def match_intel_profile(domain: str, root_domain: str, profiles: List[dict]) -> Optional[dict]:
@@ -63,6 +55,17 @@ def match_intel_profile(domain: str, root_domain: str, profiles: List[dict]) -> 
     return None
 
 
+def is_safe_whitelist_domain(dom: str, root: str) -> bool:
+    """Check if a domain or root belongs to the safe whitelist."""
+    if root in SAFE_CDN_ROOTS or dom in SAFE_CDN_ROOTS:
+        return True
+    if any(dom == s or dom.endswith(f".{s}") or root == s or root.endswith(f".{s}") for s in SAFE_CDN_ROOTS):
+        return True
+    if dom.endswith(".gov.cn") or root.endswith(".gov.cn") or dom.endswith(".edu.cn") or root.endswith(".edu.cn"):
+        return True
+    return False
+
+
 def evaluate_domain_risk(
     domain: str,
     root_domain: Optional[str] = None,
@@ -71,13 +74,10 @@ def evaluate_domain_risk(
 ) -> dict:
     """
     Evaluate domain risk level and tags based on intelligence profiles and heuristic rules.
-    Returns:
-    {
-        "risk_level": "critical" | "high" | "medium" | "low" | "safe" | "pending",
-        "risk_tags": ["..."],
-        "risk_remark": "...",
-        "risk_source": "intel_rule" | "builtin_rule" | "pending"
-    }
+    Per user requirement:
+    - 智能规则初筛只研判安全白名单域名（safe 🟢）。
+    - 命中预置情报库的域名按情报库级别评定（intel_rule）。
+    - 其他所有域名一律保持待研判（pending ⚪），不自动判为中高危.
     """
     dom = domain.lower().strip()
     if not root_domain:
@@ -98,7 +98,7 @@ def evaluate_domain_risk(
         except Exception:
             profiles = []
 
-    # 1. Match against user intelligence base (Highest priority)
+    # 1. Match against user threat intelligence base (Highest priority)
     if profiles:
         matched_profile = match_intel_profile(dom, root, profiles)
         if matched_profile:
@@ -120,45 +120,16 @@ def evaluate_domain_risk(
                 "risk_source": "intel_rule"
             }
 
-    # 2. Heuristic Rule: Pure IP check (Medium risk)
-    if IPV4_REGEX.match(dom) or (":" in dom and IPV6_REGEX.match(dom)):
-        return {
-            "risk_level": "medium",
-            "risk_tags": ["纯IP外链"],
-            "risk_remark": "外部直连裸IP地址，缺少标准域名解析，常见于测试接口或非标服务",
-            "risk_source": "builtin_rule"
-        }
-
-    # 3. Heuristic Rule: Dynamic DNS / Tunneling service (Medium risk)
-    for ddns in DDNS_TUNNEL_DOMAINS:
-        if dom == ddns or dom.endswith(f".{ddns}"):
-            return {
-                "risk_level": "medium",
-                "risk_tags": ["动态域名(DDNS)"],
-                "risk_remark": f"动态DNS或内网穿透域名({ddns})，服务极不稳定且常用于隐蔽通道",
-                "risk_source": "builtin_rule"
-            }
-
-    # 4. Heuristic Rule: Trusted safe CDN / Big Tech whitelist (Safe)
-    if root in SAFE_CDN_ROOTS or dom in SAFE_CDN_ROOTS:
+    # 2. Heuristic Rule: Only evaluate Safe Whitelist / Public CDN / Official domains
+    if is_safe_whitelist_domain(dom, root):
         return {
             "risk_level": "safe",
-            "risk_tags": ["主流CDN/基础设施"],
-            "risk_remark": "公认知名公共云、主流CDN或开源静态加速基础设施",
+            "risk_tags": ["主流CDN/白名单"],
+            "risk_remark": "公认知名公共云、主流CDN或官方合规基础设施",
             "risk_source": "builtin_rule"
         }
 
-    # 5. Heuristic Rule: Suspicious / Abuse-prone TLDs (Medium risk)
-    tld = root.split(".")[-1].lower() if "." in root else ""
-    if tld in SUSPICIOUS_TLDS:
-        return {
-            "risk_level": "medium",
-            "risk_tags": ["易滥用顶级域"],
-            "risk_remark": f"使用廉价或易滥用顶级域名(.{tld})，常见于黑灰产与批量注册站点",
-            "risk_source": "builtin_rule"
-        }
-
-    # Default: Pending
+    # 3. All others remain pending (待研判状态)
     return {
         "risk_level": "pending",
         "risk_tags": [],
@@ -168,15 +139,13 @@ def evaluate_domain_risk(
 
 
 def make_context_snippet(text: str, target: str, max_len: int = 150) -> str:
-    """Create a readable context snippet around the matched string."""
+    """Extract a snippet of text surrounding the target domain."""
     idx = text.lower().find(target.lower())
     if idx == -1:
-        return text[:max_len].strip()
-    
-    half = max_len // 2
-    start = max(0, idx - half)
-    end = min(len(text), idx + len(target) + half)
-    snippet = text[start:end].replace("\n", " ").replace("\r", " ").strip()
+        return text[:max_len]
+    start = max(0, idx - 40)
+    end = min(len(text), idx + len(target) + 60)
+    snippet = text[start:end].replace("\r", " ").replace("\n", " ")
     if start > 0:
         snippet = "..." + snippet
     if end < len(text):
@@ -187,13 +156,16 @@ def make_context_snippet(text: str, target: str, max_len: int = 150) -> str:
 async def verify_page_for_domain(client: httpx.AsyncClient, url: str, domain: str) -> dict:
     """Check a single URL to see if target domain still exists in response."""
     start_time = asyncio.get_event_loop().time()
+    req_url = url.strip()
+    if not req_url.startswith(("http://", "https://")):
+        req_url = "http://" + req_url.lstrip("/")
     try:
-        resp = await client.get(url, timeout=10.0)
+        resp = await client.get(req_url, timeout=10.0)
         elapsed_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
         
         if resp.status_code in (404, 410):
             return {
-                "url": url,
+                "url": req_url,
                 "status_code": resp.status_code,
                 "status": "page_removed",
                 "found": False,
@@ -206,7 +178,7 @@ async def verify_page_for_domain(client: httpx.AsyncClient, url: str, domain: st
         if dom_lower in body_text.lower():
             snippet = make_context_snippet(body_text, domain)
             return {
-                "url": url,
+                "url": req_url,
                 "status_code": resp.status_code,
                 "status": "domain_still_present",
                 "found": True,
@@ -215,7 +187,7 @@ async def verify_page_for_domain(client: httpx.AsyncClient, url: str, domain: st
             }
         else:
             return {
-                "url": url,
+                "url": req_url,
                 "status_code": resp.status_code,
                 "status": "domain_cleared",
                 "found": False,
@@ -224,7 +196,7 @@ async def verify_page_for_domain(client: httpx.AsyncClient, url: str, domain: st
             }
     except httpx.TimeoutException:
         return {
-            "url": url,
+            "url": req_url,
             "status_code": 0,
             "status": "error",
             "found": None,
@@ -233,7 +205,7 @@ async def verify_page_for_domain(client: httpx.AsyncClient, url: str, domain: st
         }
     except Exception as e:
         return {
-            "url": url,
+            "url": req_url,
             "status_code": 0,
             "status": "error",
             "found": None,
@@ -248,7 +220,7 @@ async def verify_domain_remediation(domain: str, occurrence_urls: List[str]) -> 
     Returns audit details and remediation verdict.
     """
     # Limit to at most 10 distinct URLs to avoid flooding
-    unique_urls = list(dict.fromkeys(occurrence_urls))[:10]
+    unique_urls = [u for u in dict.fromkeys(occurrence_urls) if u and u.strip()][:10]
     now_iso = datetime.now().isoformat()
 
     if not unique_urls:
@@ -257,6 +229,11 @@ async def verify_domain_remediation(domain: str, occurrence_urls: List[str]) -> 
             "verify_time": now_iso,
             "summary": "未找到原始涉险页面 URL 记录，无法执行复测",
             "tested_count": 0,
+            "total_pages": 0,
+            "still_present_count": 0,
+            "remaining_pages": 0,
+            "cleared_count": 0,
+            "error_count": 0,
             "details": []
         }
 

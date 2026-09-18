@@ -1052,8 +1052,14 @@ const app = createApp({
                     await loadDomainStats();
                     showVerifyReport(data.verdict, domain);
                 } else {
-                    const err = await res.json();
-                    alert("复测请求失败: " + (err.detail || "未知错误"));
+                    let errMsg = "未知错误";
+                    try {
+                        const err = await res.json();
+                        errMsg = err.detail || JSON.stringify(err);
+                    } catch {
+                        errMsg = (await res.text()) || res.statusText || `HTTP ${res.status}`;
+                    }
+                    alert("复测请求失败: " + errMsg);
                 }
             } catch (e) {
                 alert("复测请求异常: " + e.message);
@@ -1099,7 +1105,14 @@ const app = createApp({
                     await loadDomainStats();
                     alert(`批量复测完成！已复测 ${selectedDomains.value.length} 个域名。`);
                 } else {
-                    alert("批量复测失败");
+                    let errMsg = "批量复测失败";
+                    try {
+                        const err = await res.json();
+                        errMsg = err.detail || JSON.stringify(err);
+                    } catch {
+                        errMsg = (await res.text()) || res.statusText || `HTTP ${res.status}`;
+                    }
+                    alert("批量复测失败: " + errMsg);
                 }
             } catch (e) {
                 alert("批量复测异常: " + e.message);
