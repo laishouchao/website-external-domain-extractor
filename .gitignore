@@ -82,6 +82,7 @@ htmlcov/
 logs/
 tmp/
 temp/
+*.png
 
 # ==========================================
 # Operating System Files
