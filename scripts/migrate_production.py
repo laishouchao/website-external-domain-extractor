@@ -497,11 +497,11 @@ def main():
     )
     # 源数据库与目标数据库配置
     parser.add_argument("--sqlite-path", type=str, default="data/crawler.db", help="源 SQLite 数据库文件路径 (.db)")
-    parser.add_argument("--pg-host", type=str, default="202.194.101.181", help="目标 PostgreSQL 主机地址")
-    parser.add_argument("--pg-port", type=int, default=5432, help="目标 PostgreSQL 端口")
-    parser.add_argument("--pg-user", type=str, default="postgres", help="目标 PostgreSQL 用户名")
-    parser.add_argument("--pg-password", type=str, default="Cernet@2026", help="目标 PostgreSQL 密码")
-    parser.add_argument("--pg-database", type=str, default="website_domain_db", help="目标 PostgreSQL 数据库名称")
+    parser.add_argument("--pg-host", type=str, default=os.getenv("PG_HOST", "127.0.0.1"), help="目标 PostgreSQL 主机地址")
+    parser.add_argument("--pg-port", type=int, default=int(os.getenv("PG_PORT", 5432)), help="目标 PostgreSQL 端口")
+    parser.add_argument("--pg-user", type=str, default=os.getenv("PG_USER", "postgres"), help="目标 PostgreSQL 用户名")
+    parser.add_argument("--pg-password", type=str, default=os.getenv("PG_PASSWORD", ""), help="目标 PostgreSQL 密码")
+    parser.add_argument("--pg-database", type=str, default=os.getenv("PG_DATABASE", "website_domain_db"), help="目标 PostgreSQL 数据库名称")
 
     # 执行控制参数
     parser.add_argument("--batch-size", type=int, default=10000, help="单批拉取与写入的行数大小 (建议 5000~20000)")

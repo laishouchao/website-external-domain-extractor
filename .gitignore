@@ -1,5 +1,5 @@
 # ==========================================
-# Data & Local Databases
+# Data & Local Databases & Environment
 # ==========================================
 data/*
 !data/.gitkeep
@@ -9,6 +9,10 @@ data/*
 *.db-journal
 *.sqlite
 *.sqlite3
+.env
+.env.*
+*.env
+!.env.example
 
 # ==========================================
 # Python Bytecode & Caches
