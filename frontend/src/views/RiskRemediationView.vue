@@ -362,15 +362,15 @@
     <Drawer
       :model-value="guideDrawerOpen"
       title="涉险页面整改指引与修复方案"
-      size="lg"
+      size="xl"
       @update:model-value="guideDrawerOpen = $event"
     >
       <div v-if="activeItem" class="space-y-6">
         <!-- Target Info Box -->
         <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2 text-xs">
-          <div class="flex items-center justify-between">
-            <span class="text-slate-400 font-medium">涉险违规页面:</span>
-            <a :href="activeItem.page_url" target="_blank" class="text-indigo-400 hover:underline font-mono truncate max-w-md">
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-slate-400 font-medium flex-shrink-0">涉险违规页面:</span>
+            <a :href="activeItem.page_url" target="_blank" class="text-indigo-400 hover:underline font-mono truncate flex-1 text-right ml-2" :title="activeItem.page_url">
               {{ activeItem.page_url }}
             </a>
           </div>

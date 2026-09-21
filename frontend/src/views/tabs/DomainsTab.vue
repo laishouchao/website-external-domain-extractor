@@ -139,8 +139,8 @@
                   v-model="selectedDomains"
                 />
               </td>
-              <td class="p-4">
-                <div class="font-medium text-slate-100 flex items-center gap-1.5">
+              <td class="p-4 cursor-pointer" @click="viewOccurrences(item.domain)" title="点击查看代码证据详情">
+                <div class="font-medium text-slate-100 flex items-center gap-1.5 hover:text-indigo-400 transition-colors">
                   <Globe class="w-4 h-4 text-slate-400 flex-shrink-0" />
                   <span class="select-all">{{ item.domain }}</span>
                 </div>
@@ -148,8 +148,8 @@
               <td class="p-4 text-slate-400 font-mono text-xs">
                 {{ item.root_domain || '-' }}
               </td>
-              <td class="p-4 text-center">
-                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-indigo-300 border border-slate-700">
+              <td class="p-4 text-center cursor-pointer" @click="viewOccurrences(item.domain)" title="点击查看代码证据详情">
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-indigo-300 border border-slate-700 hover:border-indigo-500/50 hover:bg-slate-700 transition">
                   {{ item.occurrence_count }} 次
                 </span>
               </td>
@@ -267,9 +267,9 @@
             :key="idx"
             class="bg-slate-950 border border-slate-800 rounded-lg p-3 space-y-2"
           >
-            <div class="flex items-center justify-between text-xs">
-              <div class="flex items-center gap-2 truncate">
-                <span class="px-1.5 py-0.5 rounded font-mono text-[10px] uppercase font-bold"
+            <div class="flex items-center justify-between text-xs gap-3">
+              <div class="flex items-center gap-2 truncate flex-1 min-w-0">
+                <span class="px-1.5 py-0.5 rounded font-mono text-[10px] uppercase font-bold flex-shrink-0"
                   :class="occ.source_type === 'link' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'"
                 >
                   {{ occ.source_type }}
@@ -277,12 +277,13 @@
                 <a
                   :href="occ.page_url"
                   target="_blank"
-                  class="text-indigo-400 hover:underline truncate max-w-md"
+                  class="text-indigo-400 hover:underline truncate font-mono"
+                  :title="occ.page_url"
                 >
                   {{ occ.page_url }}
                 </a>
               </div>
-              <span class="text-slate-500 font-mono">{{ occ.created_at || '' }}</span>
+              <span class="text-slate-500 font-mono flex-shrink-0 text-[11px]">{{ occ.created_at || '' }}</span>
             </div>
 
             <CodeSnippet

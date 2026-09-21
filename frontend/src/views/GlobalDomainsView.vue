@@ -332,18 +332,18 @@
                 :key="idx"
                 class="bg-slate-900/60 border border-slate-800/80 rounded-lg p-3 space-y-2 text-xs"
               >
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-2 truncate">
-                    <span class="px-1.5 py-0.5 rounded text-[10px] uppercase font-bold"
+                <div class="flex items-center justify-between gap-3">
+                  <div class="flex items-center gap-2 truncate flex-1 min-w-0">
+                    <span class="px-1.5 py-0.5 rounded text-[10px] uppercase font-bold flex-shrink-0"
                       :class="occ.source_type === 'link' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'"
                     >
                       {{ occ.source_type }}
                     </span>
-                    <a :href="occ.page_url" target="_blank" class="text-indigo-400 hover:underline truncate max-w-md">
+                    <a :href="occ.page_url" target="_blank" class="text-indigo-400 hover:underline truncate font-mono" :title="occ.page_url">
                       {{ occ.page_url }}
                     </a>
                   </div>
-                  <span class="text-slate-500 font-mono">{{ occ.created_at || '' }}</span>
+                  <span class="text-slate-500 font-mono flex-shrink-0 text-[11px]">{{ occ.created_at || '' }}</span>
                 </div>
 
                 <CodeSnippet
