@@ -35,14 +35,21 @@ def extract_context_around(content: str, target: str, window: int = 60) -> str:
 
 
 async def verify_single_risk_page(
-    remediation_id: int,
+    item_or_id: Any,
     client: Optional[httpx.AsyncClient] = None
 ) -> Dict[str, Any]:
     """
     Verify if a specific risk page still contains the offending external domain.
+    Accepts either an existing dict record or an integer ID.
     Returns the verification verdict and updates the database record.
     """
-    item = await asyncio.to_thread(crud.get_risk_remediation_by_id, remediation_id)
+    if isinstance(item_or_id, dict):
+        item = item_or_id
+        remediation_id = item["id"]
+    else:
+        remediation_id = int(item_or_id)
+        item = await asyncio.to_thread(crud.get_risk_remediation_by_id, remediation_id)
+
     if not item:
         return {"id": remediation_id, "error": "Record not found", "verify_status": "error"}
 
@@ -55,7 +62,7 @@ async def verify_single_risk_page(
     if client is None:
         client = httpx.AsyncClient(
             verify=False,
-            timeout=8.0,
+            timeout=httpx.Timeout(6.0, connect=3.0),
             follow_redirects=True,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 (RiskPageVerifier)"
@@ -348,8 +355,8 @@ class PeriodicRiskVerifier:
             except Exception as e:
                 logger.warning(f"Error syncing risk pages before verification: {e}")
 
-            # Step 2: Fetch pending / failed items to verify (run in worker thread)
-            pending_items = await asyncio.to_thread(crud.get_unverified_risk_remediations, 500)
+            # Step 2: Fetch pending / failed items to verify (run in worker thread, None = all records)
+            pending_items = await asyncio.to_thread(crud.get_unverified_risk_remediations, None)
             if not pending_items:
                 self.last_run_stats = {
                     "total_tested": 0,
@@ -391,12 +398,18 @@ class PeriodicRiskVerifier:
                 "started_at": start_str
             }
 
+            queue = asyncio.Queue()
+            for it in pending_items:
+                queue.put_nowait(it)
+
             progress_lock = asyncio.Lock()
-            semaphore = asyncio.Semaphore(8)  # max 8 concurrent requests
-            limits = httpx.Limits(max_keepalive_connections=15, max_connections=20)
+            limits = httpx.Limits(max_keepalive_connections=40, max_connections=50)
+            num_workers = min(20, max(1, len(pending_items)))
+            results = []
+
             async with httpx.AsyncClient(
                 verify=False,
-                timeout=8.0,
+                timeout=httpx.Timeout(6.0, connect=3.0),
                 limits=limits,
                 follow_redirects=True,
                 headers={
@@ -404,10 +417,20 @@ class PeriodicRiskVerifier:
                 }
             ) as client:
 
-                async def sem_worker(item):
-                    async with semaphore:
-                        res = await verify_single_risk_page(item["id"], client=client)
+                async def worker():
+                    while not queue.empty():
+                        try:
+                            item = queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+
+                        try:
+                            res = await verify_single_risk_page(item, client=client)
+                        except Exception as ex:
+                            res = {"id": item.get("id"), "verify_status": "error", "error": str(ex)}
+
                         async with progress_lock:
+                            results.append(res)
                             self.current_progress["current"] += 1
                             st = res.get("verify_status")
                             if st == "verified_clean":
@@ -425,10 +448,11 @@ class PeriodicRiskVerifier:
                             repaired = self.current_progress["cleaned_count"] + self.current_progress["removed_count"]
                             self.current_progress["cleaned_ratio"] = round((repaired / cur) * 100, 1) if cur > 0 else 0.0
                             self.current_progress["failed_ratio"] = round((self.current_progress["failed_count"] / cur) * 100, 1) if cur > 0 else 0.0
-                        return res
 
-                tasks = [asyncio.create_task(sem_worker(item)) for item in pending_items]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                        queue.task_done()
+
+                workers = [asyncio.create_task(worker()) for _ in range(num_workers)]
+                await asyncio.gather(*workers)
 
             # Aggregate stats
             cleaned = sum(1 for r in results if isinstance(r, dict) and r.get("verify_status") == "verified_clean")
@@ -465,8 +489,8 @@ class PeriodicRiskVerifier:
         self.current_progress["started_at"] = start_str
 
         try:
-            # Fetch remediated items (verified_clean, page_removed)
-            remediated_items = await asyncio.to_thread(crud.get_remediated_risk_remediations, 1000)
+            # Fetch remediated items (verified_clean, page_removed) - None for ALL records
+            remediated_items = await asyncio.to_thread(crud.get_remediated_risk_remediations, None)
             if not remediated_items:
                 finish_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 self.rollback_audit["last_audit_time"] = finish_str
@@ -497,13 +521,18 @@ class PeriodicRiskVerifier:
                 "started_at": start_str
             }
 
+            queue = asyncio.Queue()
+            for it in remediated_items:
+                queue.put_nowait(it)
+
             progress_lock = asyncio.Lock()
-            semaphore = asyncio.Semaphore(8)
-            limits = httpx.Limits(max_keepalive_connections=15, max_connections=20)
+            limits = httpx.Limits(max_keepalive_connections=40, max_connections=50)
+            num_workers = min(20, max(1, len(remediated_items)))
+            results = []
 
             async with httpx.AsyncClient(
                 verify=False,
-                timeout=8.0,
+                timeout=httpx.Timeout(6.0, connect=3.0),
                 limits=limits,
                 follow_redirects=True,
                 headers={
@@ -511,9 +540,18 @@ class PeriodicRiskVerifier:
                 }
             ) as client:
 
-                async def sem_worker(item):
-                    async with semaphore:
-                        res = await verify_single_risk_page(item["id"], client=client)
+                async def worker():
+                    while not queue.empty():
+                        try:
+                            item = queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+
+                        try:
+                            res = await verify_single_risk_page(item, client=client)
+                        except Exception as ex:
+                            res = {"id": item.get("id"), "verify_status": "error", "error": str(ex)}
+
                         st = res.get("verify_status")
 
                         # If rollback is detected (domain reappeared in page source)
@@ -532,6 +570,7 @@ class PeriodicRiskVerifier:
                                 logger.error(f"Failed to sync rollback status for item {item['id']}: {ex}")
 
                         async with progress_lock:
+                            results.append(res)
                             self.current_progress["current"] += 1
                             if st == "verified_clean":
                                 self.current_progress["cleaned_count"] += 1
@@ -548,10 +587,11 @@ class PeriodicRiskVerifier:
                             repaired = self.current_progress["cleaned_count"] + self.current_progress["removed_count"]
                             self.current_progress["cleaned_ratio"] = round((repaired / cur) * 100, 1) if cur > 0 else 0.0
                             self.current_progress["failed_ratio"] = round((self.current_progress["failed_count"] / cur) * 100, 1) if cur > 0 else 0.0
-                        return res
 
-                tasks = [asyncio.create_task(sem_worker(item)) for item in remediated_items]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                        queue.task_done()
+
+                workers = [asyncio.create_task(worker()) for _ in range(num_workers)]
+                await asyncio.gather(*workers)
 
             cleaned = sum(1 for r in results if isinstance(r, dict) and r.get("verify_status") == "verified_clean")
             failed = sum(1 for r in results if isinstance(r, dict) and r.get("verify_status") == "verified_failed")

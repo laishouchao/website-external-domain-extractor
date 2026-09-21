@@ -2353,28 +2353,30 @@ def batch_update_risk_remediations_manual_status(
         return cursor.rowcount
 
 
-def get_unverified_risk_remediations(limit: int = 500) -> List[dict]:
-    """Retrieve items requiring periodic automatic re-check."""
+def get_unverified_risk_remediations(limit: Optional[int] = None) -> List[dict]:
+    """Retrieve items requiring periodic automatic re-check (None means all records)."""
     with db_session() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT r.id, r.task_id, r.domain, r.page_url, r.source_type, r.last_verified_at
+        sql = """
+            SELECT r.id, r.task_id, r.domain, r.page_url, r.source_type, r.last_verified_at, r.raw_match
             FROM risk_page_remediations r
             JOIN tasks t ON r.task_id = t.id
             WHERE t.status != 'deleting'
               AND r.verify_status IN ('unverified', 'verified_failed')
               AND r.manual_status != 'ignored'
             ORDER BY r.last_verified_at ASC NULLS FIRST, r.id ASC
-            LIMIT ?
-        """, (limit,))
+        """
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+        cursor.execute(sql)
         return [dict(r) for r in cursor.fetchall()]
 
 
-def get_remediated_risk_remediations(limit: int = 1000) -> List[dict]:
-    """Retrieve remediated items (verified_clean, page_removed) for rollback re-audit (every 2 days at 15:00)."""
+def get_remediated_risk_remediations(limit: Optional[int] = None) -> List[dict]:
+    """Retrieve remediated items (verified_clean, page_removed) for rollback re-audit (None means all records)."""
     with db_session() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
+        sql = """
             SELECT r.id, r.task_id, r.domain, r.page_url, r.source_type, r.last_verified_at, r.raw_match
             FROM risk_page_remediations r
             JOIN tasks t ON r.task_id = t.id
@@ -2382,8 +2384,10 @@ def get_remediated_risk_remediations(limit: int = 1000) -> List[dict]:
               AND r.verify_status IN ('verified_clean', 'page_removed')
               AND r.manual_status != 'ignored'
             ORDER BY r.last_verified_at ASC NULLS FIRST, r.id ASC
-            LIMIT ?
-        """, (limit,))
+        """
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+        cursor.execute(sql)
         return [dict(r) for r in cursor.fetchall()]
 
 
