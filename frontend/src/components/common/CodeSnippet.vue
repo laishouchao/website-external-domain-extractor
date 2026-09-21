@@ -2,7 +2,7 @@
   <div class="relative group font-mono text-xs bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 overflow-hidden shadow-inner">
     <div
       :class="[
-        'overflow-x-auto text-slate-300 leading-relaxed break-words select-all whitespace-pre-wrap',
+        'overflow-x-auto text-slate-300 leading-relaxed break-words break-all select-all whitespace-pre-wrap',
         maxHeightClass
       ]"
     >

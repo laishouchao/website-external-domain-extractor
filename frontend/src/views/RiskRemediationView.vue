@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 w-full min-w-0">
     <!-- Header & 10-Minute Periodic Verification Ribbon -->
     <div class="flex flex-wrap items-center justify-between gap-4">
       <div>
@@ -106,16 +106,16 @@
     </div>
 
     <!-- Filter and Batch Operations Bar -->
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-      <div class="flex flex-wrap items-center gap-3">
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center gap-2.5">
         <!-- Search Input -->
-        <div class="relative w-64">
+        <div class="relative w-56 sm:w-64">
           <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             v-model="store.filters.search"
             type="text"
-            placeholder="搜索页面URL、域名或任务..."
-            class="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+            placeholder="搜索URL、域名或任务..."
+            class="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
             @keyup.enter="handleSearch"
           />
         </div>
@@ -123,7 +123,7 @@
         <!-- Task Selector -->
         <select
           v-model="store.filters.taskId"
-          class="bg-slate-950 border border-slate-700 text-slate-300 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500 max-w-[200px]"
+          class="bg-slate-950 border border-slate-700 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500 max-w-[180px] truncate"
           @change="handleSearch"
         >
           <option value="">全部扫描任务</option>
@@ -139,20 +139,20 @@
         <!-- Risk Level Select -->
         <select
           v-model="store.filters.riskLevel"
-          class="bg-slate-950 border border-slate-700 text-slate-300 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500"
+          class="bg-slate-950 border border-slate-700 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500"
           @change="handleSearch"
         >
           <option value="">全部风险等级</option>
-          <option value="critical">严重风险 (Critical)</option>
-          <option value="high">高危风险 (High)</option>
-          <option value="medium">中危风险 (Medium)</option>
-          <option value="low">低危风险 (Low)</option>
+          <option value="critical">严重 (Critical)</option>
+          <option value="high">高危 (High)</option>
+          <option value="medium">中危 (Medium)</option>
+          <option value="low">低危 (Low)</option>
         </select>
 
         <!-- Verify Status Select -->
         <select
           v-model="store.filters.verifyStatus"
-          class="bg-slate-950 border border-slate-700 text-slate-300 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500"
+          class="bg-slate-950 border border-slate-700 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500"
           @change="handleSearch"
         >
           <option value="pending_only">待闭环处置 (未复测+残留)</option>
@@ -167,7 +167,7 @@
         <!-- Manual Status Select -->
         <select
           v-model="store.filters.manualStatus"
-          class="bg-slate-950 border border-slate-700 text-slate-300 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500"
+          class="bg-slate-950 border border-slate-700 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500"
           @change="handleSearch"
         >
           <option value="">全部工单状态</option>
@@ -179,36 +179,36 @@
 
         <button
           @click="handleSearch"
-          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-medium rounded-lg transition-colors"
+          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg transition-colors cursor-pointer"
         >
           筛选
         </button>
         <button
           @click="resetFilters"
-          class="px-2.5 py-1.5 text-slate-400 hover:text-slate-200 text-sm transition-colors"
+          class="px-2 py-1.5 text-slate-400 hover:text-slate-200 text-xs transition-colors cursor-pointer"
         >
           重置
         </button>
       </div>
 
       <!-- Batch Action Tools -->
-      <div v-if="store.selectedIds.length > 0" class="flex items-center gap-2">
+      <div v-if="store.selectedIds.length > 0" class="flex items-center gap-2 flex-shrink-0">
         <span class="text-xs text-slate-400">已选 {{ store.selectedIds.length }} 项:</span>
         <button
           @click="store.batchUpdateStatus('in_progress')"
-          class="px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 rounded-lg text-xs font-medium transition-colors"
+          class="px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 rounded-lg text-xs font-medium transition-colors cursor-pointer"
         >
           标为整改中
         </button>
         <button
           @click="store.batchUpdateStatus('resolved')"
-          class="px-2.5 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 rounded-lg text-xs font-medium transition-colors"
+          class="px-2.5 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 rounded-lg text-xs font-medium transition-colors cursor-pointer"
         >
           标为已处置
         </button>
         <button
           @click="store.batchUpdateStatus('ignored')"
-          class="px-2.5 py-1 bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg text-xs font-medium transition-colors border border-slate-700"
+          class="px-2.5 py-1 bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg text-xs font-medium transition-colors border border-slate-700 cursor-pointer"
         >
           忽略
         </button>
@@ -218,10 +218,10 @@
     <!-- Remediation Pages Table -->
     <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
       <div class="overflow-x-auto">
-        <table class="w-full text-left text-sm text-slate-300">
+        <table class="w-full min-w-[920px] lg:min-w-0 table-fixed text-left text-sm text-slate-300">
           <thead class="bg-slate-950/80 text-xs font-semibold uppercase text-slate-400 border-b border-slate-800">
             <tr>
-              <th class="p-4 w-10">
+              <th class="p-3.5 w-10 text-center">
                 <input
                   type="checkbox"
                   class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer"
@@ -229,13 +229,13 @@
                   @change="toggleSelectAll"
                 />
               </th>
-              <th class="p-4">涉险页面与任务</th>
-              <th class="p-4">违规外部域名</th>
-              <th class="p-4">风险等级</th>
-              <th class="p-4">载体代码存证</th>
-              <th class="p-4">10分钟复测状态</th>
-              <th class="p-4">工单状态</th>
-              <th class="p-4 text-right">操作</th>
+              <th class="p-3.5 w-[26%]">涉险页面与任务</th>
+              <th class="p-3.5 w-[15%]">违规外部域名</th>
+              <th class="p-3.5 w-[10%] text-center">风险等级</th>
+              <th class="p-3.5 w-[26%]">载体代码存证</th>
+              <th class="p-3.5 w-[10%] text-center">复测状态</th>
+              <th class="p-3.5 w-[8%] text-center">工单状态</th>
+              <th class="p-3.5 w-[5%] min-w-[72px] text-right">操作</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-800/60 font-normal">
@@ -261,7 +261,7 @@
               :key="item.id"
               class="hover:bg-slate-800/40 transition-colors"
             >
-              <td class="p-4">
+              <td class="p-3.5 text-center">
                 <input
                   type="checkbox"
                   class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer"
@@ -269,39 +269,48 @@
                   v-model="store.selectedIds"
                 />
               </td>
-              <td class="p-4">
-                <div class="space-y-1">
-                  <div class="flex items-center gap-1.5 font-medium text-slate-200">
-                    <FileText class="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+              <td class="p-3.5">
+                <div class="space-y-1 min-w-0">
+                  <div class="flex items-start gap-1.5 font-medium text-slate-200">
+                    <FileText class="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
                     <a
                       :href="item.page_url"
                       target="_blank"
-                      class="text-indigo-400 hover:underline truncate max-w-md text-xs font-mono"
+                      class="text-indigo-400 hover:text-indigo-300 hover:underline text-xs font-mono break-all line-clamp-2 leading-relaxed"
+                      :title="item.page_url"
                     >
                       {{ item.page_url }}
                     </a>
                   </div>
-                  <div class="text-[11px] text-slate-500 flex items-center gap-2">
-                    <span class="truncate max-w-xs">{{ item.task_name || `任务 #${item.task_id}` }}</span>
-                    <span>•</span>
-                    <span class="truncate max-w-xs text-slate-400">{{ item.page_title || '无标题' }}</span>
+                  <div class="text-[11px] text-slate-500 flex flex-wrap items-center gap-1.5 pl-5">
+                    <span class="truncate max-w-[140px] text-slate-400 font-medium" :title="item.task_name || `任务 #${item.task_id}`">
+                      {{ item.task_name || `任务 #${item.task_id}` }}
+                    </span>
+                    <span v-if="item.page_title" class="text-slate-600">•</span>
+                    <span v-if="item.page_title" class="truncate max-w-[140px] text-slate-400" :title="item.page_title">
+                      {{ item.page_title }}
+                    </span>
                   </div>
                 </div>
               </td>
-              <td class="p-4 font-mono text-xs font-medium text-rose-300">
-                <div class="flex items-center gap-1">
-                  <Globe class="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
-                  <span class="select-all">{{ item.domain }}</span>
-                </div>
-                <div v-if="item.root_domain" class="text-[10px] text-slate-500 mt-0.5">
-                  主根域: {{ item.root_domain }}
+              <td class="p-3.5">
+                <div class="space-y-0.5 min-w-0">
+                  <div class="flex items-start gap-1 font-mono text-xs font-medium text-rose-300">
+                    <Globe class="w-3.5 h-3.5 text-rose-400 flex-shrink-0 mt-0.5" />
+                    <span class="select-all break-all leading-snug">{{ item.domain }}</span>
+                  </div>
+                  <div v-if="item.root_domain" class="text-[10px] text-slate-500 font-mono truncate pl-4.5" :title="item.root_domain">
+                    根域: {{ item.root_domain }}
+                  </div>
                 </div>
               </td>
-              <td class="p-4">
-                <RiskBadge :level="item.risk_level" />
+              <td class="p-3.5 text-center">
+                <div class="flex justify-center">
+                  <RiskBadge :level="item.risk_level" />
+                </div>
               </td>
-              <td class="p-4 max-w-sm">
-                <div class="space-y-1">
+              <td class="p-3.5">
+                <div class="space-y-1 min-w-0">
                   <div class="flex items-center gap-1">
                     <span class="px-1.5 py-0.2 rounded text-[10px] uppercase font-bold font-mono bg-slate-800 text-slate-400 border border-slate-700">
                       {{ item.source_type || 'text' }}
@@ -310,24 +319,29 @@
                   <CodeSnippet
                     :code="item.context_snippet || item.raw_match"
                     :highlight-term="item.domain"
+                    max-height="max-h-24"
                   />
                 </div>
               </td>
-              <td class="p-4">
-                <StatusBadge :status="item.verify_status || 'unverified'" type="verify" />
-                <div class="text-[10px] text-slate-500 font-mono mt-1">
-                  {{ item.last_verified_at ? item.last_verified_at.split(' ')[1] || item.last_verified_at : '等待轮询' }}
+              <td class="p-3.5 text-center">
+                <div class="flex flex-col items-center">
+                  <StatusBadge :status="item.verify_status || 'unverified'" type="verify" />
+                  <div class="text-[10px] text-slate-500 font-mono mt-1 whitespace-nowrap">
+                    {{ item.last_verified_at ? item.last_verified_at.split(' ')[1] || item.last_verified_at : '等待轮询' }}
+                  </div>
                 </div>
               </td>
-              <td class="p-4">
-                <StatusBadge :status="item.manual_status || 'pending'" type="manual" />
+              <td class="p-3.5 text-center">
+                <div class="flex justify-center">
+                  <StatusBadge :status="item.manual_status || 'pending'" type="manual" />
+                </div>
               </td>
-              <td class="p-4 text-right">
-                <div class="flex items-center justify-end gap-1.5">
+              <td class="p-3.5 text-right">
+                <div class="flex items-center justify-end gap-1">
                   <!-- One-click test button -->
                   <button
                     @click="store.verifySingle(item.id)"
-                    class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors"
+                    class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
                     :disabled="store.verifyingId === item.id"
                     title="立即对此页面执行复测"
                   >
@@ -337,7 +351,7 @@
                   <!-- Remediation Guide -->
                   <button
                     @click="openGuideDrawer(item)"
-                    class="p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded-lg transition-colors"
+                    class="p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
                     title="查看整改操作建议与指南"
                   >
                     <BookOpen class="w-4 h-4" />
