@@ -115,22 +115,43 @@ e:\SOLO\网站外部域名提取系统\
 │   │   ├── __init__.py
 │   │   ├── engine.py          # 异步爬虫调度引擎（广度优先队列、状态流转）
 │   │   ├── worker.py          # 异步请求抓取器、sitemap.xml 预探测
-│   │   └── extractor.py       # 核心提取器：全属性链接提取 + 文本代码裸域名正则解析
+│   │   ├── extractor.py       # 核心提取器：全属性链接提取 + 文本代码裸域名正则解析
+│   │   └── risk_verifier.py   # 10分钟涉险页面自动巡检复测引擎
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── tasks.py           # 扫描任务增删改查、启动/暂停/停止/重试控制
 │   │   ├── sitemap.py         # 网站地图页面列表查询与 XML/CSV 导出
 │   │   ├── domains.py         # 外部域名列表、证据穿透、统计与 TXT/CSV/JSON 导出
+│   │   ├── subdomains.py      # 本站扩展子域名接口
+│   │   ├── global_domains.py  # 全网外部域名知识库与跨任务关联
+│   │   ├── risk_remediation.py# 风险页面整改工作台与闭环复测
+│   │   ├── risk_profiles.py   # 威胁情报规则库与全库回溯
 │   │   └── events.py          # SSE 实时日志与进度广播流
 │   └── static/
-│       ├── index.html         # 现代化 SPA 单页前端应用
-│       ├── app.js             # Vue 3 核心前端业务逻辑
-│       ├── style.css          # 自定义视觉样式、终端窗体与动画
-│       └── vendor/
-│           └── vue.global.prod.js # 本地缓存的 Vue 3 生产版本
+│       └── dist/              # Vite 5 构建产物（离线自包含 SPA 前端）
+├── frontend/                  # 现代化工程化 Vue 3 SPA 前端源码
+│   ├── src/
+│   │   ├── api/client.js      # Axios 接口封装
+│   │   ├── stores/            # Pinia 状态管理 (tasks, globalDomains, remediation, threatIntel, ui)
+│   │   ├── components/        # 公共组件 (RiskBadge, StatusBadge, Drawer, Modal, CodeSnippet, Toast)
+│   │   ├── views/             # 核心视图 (Dashboard, Tasks, TaskDetail, GlobalDomains, Remediation, ThreatIntel, Settings)
+│   │   └── router/            # Vue Router 路由表
+│   ├── vite.config.js         # Vite 5 构建配置
+│   ├── tailwind.config.js     # Tailwind CSS 离线样式系统
+│   └── package.json           # 前端依赖包配置
 ├── .env.example               # 环境与数据库配置模板
-├── run.py                     # 启动入口脚本
+├── run.py                     # 后端服务启动入口
 ├── start.bat                  # Windows 快捷批处理启动脚本
 ├── requirements.txt           # 项目 Python 依赖库
 └── README.md                  # 系统说明文档
 ```
+
+### 前端开发与构建
+如需修改前端界面：
+```bash
+cd frontend
+npm install       # 安装依赖
+npm run dev       # 启动前端开发调试服务器 (http://localhost:3000)
+npm run build     # 编译生成生产包到 app/static/dist/
+```
+

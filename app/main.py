@@ -59,13 +59,33 @@ app.include_router(events_router)
 
 # Static files directory
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+STATIC_DIST_DIR = STATIC_DIR / "dist"
+
+# Mount /assets if Vite SPA build exists
+if (STATIC_DIST_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(STATIC_DIST_DIR / "assets")), name="spa_assets")
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
 async def root():
-    index_path = STATIC_DIR / "index.html"
-    if index_path.exists():
-        return FileResponse(str(index_path))
-    return {"message": "Crawler API is running. UI index.html not yet installed."}
+    if (STATIC_DIST_DIR / "index.html").exists():
+        return FileResponse(str(STATIC_DIST_DIR / "index.html"))
+    legacy_path = STATIC_DIR / "index.html"
+    if legacy_path.exists():
+        return FileResponse(str(legacy_path))
+    return {"message": "Crawler API is running. UI not yet built."}
+
+@app.get("/{full_path:path}")
+async def serve_spa_fallback(full_path: str):
+    # Pass through API requests or static requests if somehow unhandled
+    if full_path.startswith("api/") or full_path.startswith("static/") or full_path.startswith("assets/"):
+        return {"error": "Not Found", "path": full_path}
+
+    if (STATIC_DIST_DIR / "index.html").exists():
+        return FileResponse(str(STATIC_DIST_DIR / "index.html"))
+    legacy_path = STATIC_DIR / "index.html"
+    if legacy_path.exists():
+        return FileResponse(str(legacy_path))
+    return {"message": "Crawler API is running. UI not yet built."}
