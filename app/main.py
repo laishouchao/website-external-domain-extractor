@@ -14,7 +14,9 @@ from app.api.domains import router as domains_router
 from app.api.subdomains import router as subdomains_router
 from app.api.global_domains import router as global_domains_router
 from app.api.risk_profiles import router as risk_profiles_router
+from app.api.risk_remediation import router as risk_remediation_router
 from app.api.events import router as events_router
+from app.crawler.risk_verifier import PeriodicRiskVerifier
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -22,8 +24,12 @@ async def lifespan(app: FastAPI):
     init_db()
     # Resume cleaning any dangling tasks stuck in 'deleting' status from previous runs
     asyncio.create_task(asyncio.to_thread(crud.purge_dangling_deleting_tasks))
+    # Start 10-minute periodic risk page remediation verifier
+    verifier = PeriodicRiskVerifier.get_instance()
+    verifier.start()
     yield
     # Shutdown
+    verifier.stop()
 
 app = FastAPI(
     title="网站外部域名提取与全深度站点地图系统",
@@ -48,6 +54,7 @@ app.include_router(domains_router)
 app.include_router(subdomains_router)
 app.include_router(global_domains_router)
 app.include_router(risk_profiles_router)
+app.include_router(risk_remediation_router)
 app.include_router(events_router)
 
 # Static files directory

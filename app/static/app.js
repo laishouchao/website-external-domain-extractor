@@ -47,6 +47,59 @@ const app = createApp({
             }
         });
 
+        // ==================== Risk Page Remediation State ====================
+        const remediationPages = ref([]);
+        const remediationTotal = ref(0);
+        const remediationPage = ref(1);
+        const remediationPageSize = ref(50);
+        const remediationLoading = ref(false);
+        const remediationStats = ref({
+            total_items: 0,
+            pending_count: 0,
+            failed_count: 0,
+            unverified_count: 0,
+            clean_count: 0,
+            tasks_affected: 0,
+            unique_risk_domains: 0,
+            unique_pages: 0,
+            level_counts: { critical: 0, high: 0, medium: 0, low: 0 },
+            task_summary: []
+        });
+        const remediationFilters = ref({
+            taskId: '',
+            riskLevel: '',
+            verifyStatus: 'pending_only',
+            manualStatus: '',
+            search: ''
+        });
+        const remediationTimer = ref({
+            is_running: true,
+            is_checking: false,
+            interval_seconds: 600,
+            remaining_seconds: 600,
+            last_run_time: null,
+            next_run_time: null,
+            last_run_stats: {}
+        });
+        const selectedRemediationIds = ref([]);
+        const isAllRemediationSelected = computed(() => {
+            if (!remediationPages.value.length) return false;
+            return remediationPages.value.every(p => selectedRemediationIds.value.includes(p.id));
+        });
+        const verifyingPageId = ref(null);
+        const isTriggeringBatchVerify = ref(false);
+        const isSyncingOccurrences = ref(false);
+
+        // Modals for risk remediation
+        const showExportModal = ref(false);
+        const exportForm = ref({
+            taskId: '',
+            verifyStatus: 'pending_only',
+            riskLevel: ''
+        });
+        const showGuideModal = ref(false);
+        const selectedGuideItem = ref(null);
+
         // New Task Form
         const newTask = ref({
             name: '',
@@ -977,11 +1030,18 @@ const app = createApp({
                 url.searchParams.delete('task_id');
                 loadGlobalDomains(1);
                 loadGlobalDomainStats();
+            } else if (viewName === 'risk_remediation') {
+                url.searchParams.set('view', 'risk_remediation');
+                url.searchParams.delete('task_id');
+                loadRemediationPages(1);
+                loadRemediationStats();
+                loadTimerStatus();
             } else if (viewName === 'tasks') {
                 url.searchParams.delete('view');
                 url.searchParams.delete('task_id');
                 loadTasks();
                 loadGlobalDomainStats();
+                loadRemediationStats();
             }
             window.history.replaceState({}, '', url.toString());
         };
@@ -1139,6 +1199,178 @@ const app = createApp({
         const filterGlobalByVerify = (status) => {
             globalDomainFilters.value.verifyStatus = globalDomainFilters.value.verifyStatus === status ? '' : status;
             loadGlobalDomains(1);
+        };
+
+        // ==================== Risk Page Remediation Methods ====================
+        const loadRemediationPages = async (page = 1) => {
+            remediationPage.value = page;
+            remediationLoading.value = true;
+            try {
+                const params = new URLSearchParams({
+                    page: page,
+                    page_size: remediationPageSize.value
+                });
+                if (remediationFilters.value.taskId) {
+                    params.append('task_id', remediationFilters.value.taskId);
+                }
+                if (remediationFilters.value.riskLevel) {
+                    params.append('risk_level', remediationFilters.value.riskLevel);
+                }
+                if (remediationFilters.value.verifyStatus) {
+                    params.append('verify_status', remediationFilters.value.verifyStatus);
+                }
+                if (remediationFilters.value.manualStatus) {
+                    params.append('manual_status', remediationFilters.value.manualStatus);
+                }
+                if (remediationFilters.value.search && remediationFilters.value.search.trim()) {
+                    params.append('search', remediationFilters.value.search.trim());
+                }
+
+                const res = await fetch(`/api/risk-remediation/pages?${params.toString()}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    remediationPages.value = data.items || [];
+                    remediationTotal.value = data.total || 0;
+                }
+            } catch (e) {
+                console.error("Failed to load remediation pages:", e);
+            } finally {
+                remediationLoading.value = false;
+            }
+        };
+
+        const loadRemediationStats = async () => {
+            try {
+                const res = await fetch('/api/risk-remediation/stats');
+                if (res.ok) {
+                    remediationStats.value = await res.json();
+                }
+            } catch (e) {
+                console.error("Failed to load remediation stats:", e);
+            }
+        };
+
+        const loadTimerStatus = async () => {
+            try {
+                const res = await fetch('/api/risk-remediation/timer-status');
+                if (res.ok) {
+                    const data = await res.json();
+                    remediationTimer.value = data;
+                }
+            } catch (e) {
+                console.error("Failed to load timer status:", e);
+            }
+        };
+
+        const verifySingleRemediationPage = async (item) => {
+            if (verifyingPageId.value !== null) return;
+            verifyingPageId.value = item.id;
+            try {
+                const res = await fetch(`/api/risk-remediation/${item.id}/verify`, { method: 'POST' });
+                if (res.ok) {
+                    const result = await res.json();
+                    item.verify_status = result.verify_status;
+                    item.last_verified_at = result.verify_time;
+                    item.last_verify_detail = result.verify_detail;
+                    await loadRemediationStats();
+                } else {
+                    alert("复测请求失败");
+                }
+            } catch (e) {
+                alert("复测请求异常: " + e.message);
+            } finally {
+                verifyingPageId.value = null;
+            }
+        };
+
+        const triggerBatchVerify = async () => {
+            if (isTriggeringBatchVerify.value) return;
+            isTriggeringBatchVerify.value = true;
+            try {
+                const res = await fetch('/api/risk-remediation/trigger-verify', { method: 'POST' });
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(data.message || "已触发全量待复测风险页面校验！后台正在异步并发核验中。");
+                    await loadTimerStatus();
+                    setTimeout(() => {
+                        loadRemediationPages(remediationPage.value);
+                        loadRemediationStats();
+                    }, 2000);
+                }
+            } catch (e) {
+                alert("触发复测异常: " + e.message);
+            } finally {
+                isTriggeringBatchVerify.value = false;
+            }
+        };
+
+        const syncRemediationOccurrences = async () => {
+            if (isSyncingOccurrences.value) return;
+            isSyncingOccurrences.value = true;
+            try {
+                const res = await fetch('/api/risk-remediation/sync', { method: 'POST' });
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(`同步完成！共检查 ${data.risk_domains_checked || 0} 个风险域名，提取并对齐了 ${data.synced_count || 0} 条风险页面存证。`);
+                    await loadRemediationPages(1);
+                    await loadRemediationStats();
+                }
+            } catch (e) {
+                alert("同步风险数据异常: " + e.message);
+            } finally {
+                isSyncingOccurrences.value = false;
+            }
+        };
+
+        const batchUpdateManualStatus = async (status) => {
+            if (!selectedRemediationIds.value.length) return;
+            try {
+                const res = await fetch('/api/risk-remediation/batch-status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ids: selectedRemediationIds.value,
+                        manual_status: status
+                    })
+                });
+                if (res.ok) {
+                    selectedRemediationIds.value = [];
+                    await loadRemediationPages(remediationPage.value);
+                    await loadRemediationStats();
+                }
+            } catch (e) {
+                alert("批量修改状态失败: " + e.message);
+            }
+        };
+
+        const toggleSelectAllRemediation = () => {
+            if (isAllRemediationSelected.value) {
+                selectedRemediationIds.value = [];
+            } else {
+                selectedRemediationIds.value = remediationPages.value.map(p => p.id);
+            }
+        };
+
+        const openExportModal = () => {
+            exportForm.value.taskId = remediationFilters.value.taskId || '';
+            exportForm.value.verifyStatus = remediationFilters.value.verifyStatus || 'pending_only';
+            exportForm.value.riskLevel = remediationFilters.value.riskLevel || '';
+            showExportModal.value = true;
+        };
+
+        const executeExport = () => {
+            const params = new URLSearchParams();
+            if (exportForm.value.taskId) params.append('task_id', exportForm.value.taskId);
+            if (exportForm.value.verifyStatus) params.append('verify_status', exportForm.value.verifyStatus);
+            if (exportForm.value.riskLevel) params.append('risk_level', exportForm.value.riskLevel);
+            const exportUrl = `/api/risk-remediation/export?${params.toString()}`;
+            window.open(exportUrl, '_blank');
+            showExportModal.value = false;
+        };
+
+        const openGuideModal = (item) => {
+            selectedGuideItem.value = item;
+            showGuideModal.value = true;
         };
 
         // Open Risk Tagging Modal
@@ -1638,10 +1870,13 @@ const app = createApp({
             }
         };
 
+        let timerCountdownInterval = null;
+
         // Lifecycle Hooks
         onMounted(async () => {
             await loadTasks();
             await loadGlobalDomainStats();
+            await loadRemediationStats();
 
             // Auto-enter task or view if URL param is present
             const urlParams = new URLSearchParams(window.location.search);
@@ -1658,6 +1893,11 @@ const app = createApp({
                     await nextTick();
                     openAssociatedTasksModal(domainParam);
                 }
+            } else if (viewParam === 'risk_remediation') {
+                currentView.value = 'risk_remediation';
+                await loadRemediationPages(1);
+                await loadRemediationStats();
+                await loadTimerStatus();
             } else if (taskIdParam) {
                 const target = tasks.value.find(t => t.id == taskIdParam);
                 if (target) {
@@ -1673,19 +1913,37 @@ const app = createApp({
                 batchForm.value.rawUrls = "https://example.com\nhttps://demo.org\napi.service.cn\n# 自动忽略注释与去重";
             }
 
+            // 1-second countdown for risk remediation scheduler
+            timerCountdownInterval = setInterval(() => {
+                if (remediationTimer.value && remediationTimer.value.remaining_seconds > 0) {
+                    remediationTimer.value.remaining_seconds--;
+                    if (remediationTimer.value.remaining_seconds <= 0) {
+                        loadTimerStatus();
+                        if (currentView.value === 'risk_remediation') {
+                            loadRemediationPages(remediationPage.value);
+                            loadRemediationStats();
+                        }
+                    }
+                }
+            }, 1000);
+
             // Polling task status every 4 seconds when in dashboard
             tasksPollInterval = setInterval(() => {
                 if (currentView.value === 'tasks') {
                     loadTasks();
                     loadGlobalDomainStats();
+                    loadRemediationStats();
                 } else if (currentView.value === 'global_domains') {
                     loadGlobalDomainStats();
+                } else if (currentView.value === 'risk_remediation') {
+                    loadTimerStatus();
                 }
             }, 4000);
         });
 
         onUnmounted(() => {
             if (tasksPollInterval) clearInterval(tasksPollInterval);
+            if (timerCountdownInterval) clearInterval(timerCountdownInterval);
             closeEventSource();
         });
 
@@ -1836,7 +2094,35 @@ const app = createApp({
             getProgressPercent,
             getStatusLabel,
             getStatusBadgeClass,
-            getLogLevelClass
+            getLogLevelClass,
+            remediationPages,
+            remediationTotal,
+            remediationPage,
+            remediationPageSize,
+            remediationLoading,
+            remediationStats,
+            remediationFilters,
+            remediationTimer,
+            selectedRemediationIds,
+            isAllRemediationSelected,
+            verifyingPageId,
+            isTriggeringBatchVerify,
+            isSyncingOccurrences,
+            showExportModal,
+            exportForm,
+            showGuideModal,
+            selectedGuideItem,
+            loadRemediationPages,
+            loadRemediationStats,
+            loadTimerStatus,
+            verifySingleRemediationPage,
+            triggerBatchVerify,
+            syncRemediationOccurrences,
+            batchUpdateManualStatus,
+            toggleSelectAllRemediation,
+            openExportModal,
+            executeExport,
+            openGuideModal
         };
     }
 });

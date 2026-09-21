@@ -202,6 +202,7 @@ def purge_task_data(task_id: int, chunk_size: int = 20000):
     try:
         with db_session() as conn:
             cursor = conn.cursor()
+            cursor.execute("DELETE FROM risk_page_remediations WHERE task_id = ?", (task_id,))
             cursor.execute("DELETE FROM external_domains WHERE task_id = ?", (task_id,))
             cursor.execute("DELETE FROM discovered_subdomains WHERE task_id = ?", (task_id,))
             cursor.execute("DELETE FROM task_logs WHERE task_id = ?", (task_id,))
@@ -1971,5 +1972,426 @@ def sync_risk_profiles_to_history(domains_filter: Optional[List[str]] = None) ->
             total_matched += cursor.rowcount
 
         return {"profile_count": len(profiles), "updated_domains": total_matched}
+
+
+# ==================== Risk Page Remediation (风险页面待处置专区) ====================
+
+def sync_risk_pages_from_occurrences(task_id: Optional[int] = None) -> dict:
+    """
+    Extract risk occurrences matching critical/high/medium/low risk domains
+    and upsert them into the dedicated risk_page_remediations table.
+    Uses index idx_occurrences_domain(task_id, domain) for ultra-fast, safe lookups.
+    """
+    now = now_iso()
+    with db_session() as conn:
+        cursor = conn.cursor()
+        if task_id is not None:
+            cursor.execute("""
+                SELECT task_id, domain, root_domain, risk_level, risk_tags, risk_remark, verify_status, verify_time, verify_detail
+                FROM external_domains
+                WHERE task_id = ? AND risk_level IN ('critical', 'high', 'medium', 'low')
+            """, (task_id,))
+        else:
+            cursor.execute("""
+                SELECT ed.task_id, ed.domain, ed.root_domain, ed.risk_level, ed.risk_tags, ed.risk_remark, ed.verify_status, ed.verify_time, ed.verify_detail
+                FROM external_domains ed
+                JOIN tasks t ON ed.task_id = t.id
+                WHERE t.status != 'deleting'
+                  AND ed.risk_level IN ('critical', 'high', 'medium', 'low')
+            """)
+        risk_domains = cursor.fetchall()
+
+    if not risk_domains:
+        return {"synced_count": 0, "risk_domains_checked": 0}
+
+    insert_records = []
+    with db_session() as conn:
+        cursor = conn.cursor()
+        for r in risk_domains:
+            tid = r["task_id"]
+            dom = r["domain"]
+            root_dom = r["root_domain"]
+            r_level = r["risk_level"]
+            r_tags = r["risk_tags"] or "[]"
+            r_remark = r["risk_remark"] or ""
+            v_status = r["verify_status"] or "unverified"
+            v_time = r["verify_time"]
+            v_detail = r["verify_detail"] or ""
+
+            # Use (task_id, domain) index - sub-millisecond execution!
+            cursor.execute("""
+                SELECT page_url, source_type, raw_match, context_snippet, created_at
+                FROM domain_occurrences
+                WHERE task_id = ? AND domain = ?
+                LIMIT 100
+            """, (tid, dom))
+            occurrences = cursor.fetchall()
+
+            seen_urls = set()
+            for occ in occurrences:
+                p_url = occ["page_url"]
+                if not p_url or p_url in seen_urls:
+                    continue
+                seen_urls.add(p_url)
+
+                insert_records.append((
+                    tid, dom, root_dom, p_url, "",
+                    occ["source_type"] or "href",
+                    occ["raw_match"] or "",
+                    occ["context_snippet"] or "",
+                    r_level, r_tags, r_remark,
+                    v_status, v_time, v_detail,
+                    'pending',
+                    occ["created_at"] or now,
+                    now
+                ))
+
+        if insert_records:
+            cursor.executemany("""
+                INSERT INTO risk_page_remediations (
+                    task_id, domain, root_domain, page_url, page_title, source_type,
+                    raw_match, context_snippet, risk_level, risk_tags, risk_remark,
+                    verify_status, last_verified_at, last_verify_detail, manual_status,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_id, domain, page_url) DO UPDATE SET
+                    risk_level = excluded.risk_level,
+                    risk_tags = excluded.risk_tags,
+                    risk_remark = excluded.risk_remark,
+                    context_snippet = CASE 
+                        WHEN LENGTH(risk_page_remediations.context_snippet) < 10 THEN excluded.context_snippet 
+                        ELSE risk_page_remediations.context_snippet 
+                    END,
+                    page_title = CASE 
+                        WHEN risk_page_remediations.page_title = '' THEN excluded.page_title 
+                        ELSE risk_page_remediations.page_title 
+                    END,
+                    updated_at = excluded.updated_at
+            """, insert_records)
+
+    return {"synced_count": len(insert_records), "risk_domains_checked": len(risk_domains)}
+
+
+def list_risk_remediations(
+    task_id: Optional[int] = None,
+    risk_level: Optional[str] = None,
+    verify_status: Optional[str] = None,
+    manual_status: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+) -> Tuple[List[dict], int]:
+    """
+    List risk page remediations with multi-dimensional filtering, pagination,
+    and associated task metadata.
+    """
+    with db_session() as conn:
+        cursor = conn.cursor()
+        where_clauses = ["t.status != 'deleting'"]
+        params: List[Any] = []
+
+        if task_id:
+            where_clauses.append("r.task_id = ?")
+            params.append(task_id)
+
+        if risk_level:
+            if risk_level == "all_risk":
+                where_clauses.append("r.risk_level IN ('critical', 'high', 'medium', 'low')")
+            else:
+                where_clauses.append("r.risk_level = ?")
+                params.append(risk_level)
+
+        if verify_status:
+            if verify_status == "pending_only":
+                where_clauses.append("r.verify_status IN ('unverified', 'verified_failed')")
+            else:
+                where_clauses.append("r.verify_status = ?")
+                params.append(verify_status)
+
+        if manual_status:
+            where_clauses.append("r.manual_status = ?")
+            params.append(manual_status)
+
+        if search:
+            pat = f"%{search.strip()}%"
+            where_clauses.append("(r.page_url LIKE ? OR r.domain LIKE ? OR r.page_title LIKE ? OR t.name LIKE ?)")
+            params.extend([pat, pat, pat, pat])
+
+        where_sql = " AND ".join(where_clauses)
+
+        # Count total
+        count_sql = f"""
+            SELECT COUNT(*)
+            FROM risk_page_remediations r
+            JOIN tasks t ON r.task_id = t.id
+            WHERE {where_sql}
+        """
+        cursor.execute(count_sql, params)
+        total = cursor.fetchone()[0]
+
+        # Query items
+        query_sql = f"""
+            SELECT 
+                r.id,
+                r.task_id,
+                t.name as task_name,
+                t.target_url as target_site_url,
+                r.domain,
+                r.root_domain,
+                r.page_url,
+                r.page_title,
+                r.source_type,
+                r.raw_match,
+                r.context_snippet,
+                r.risk_level,
+                r.risk_tags,
+                r.risk_remark,
+                r.verify_status,
+                r.last_verified_at,
+                r.last_verify_detail,
+                r.manual_status,
+                r.manual_remark,
+                r.created_at,
+                r.updated_at
+            FROM risk_page_remediations r
+            JOIN tasks t ON r.task_id = t.id
+            WHERE {where_sql}
+            ORDER BY 
+                CASE 
+                    WHEN r.verify_status = 'verified_failed' THEN 1
+                    WHEN r.verify_status = 'unverified' THEN 2
+                    ELSE 3
+                END ASC,
+                r.id DESC
+            LIMIT ? OFFSET ?
+        """
+        cursor.execute(query_sql, params + [limit, offset])
+        rows = cursor.fetchall()
+        items = []
+        for r in rows:
+            d = dict(r)
+            raw_tags = d.get("risk_tags") or "[]"
+            if isinstance(raw_tags, str):
+                try:
+                    d["risk_tags"] = json.loads(raw_tags)
+                except Exception:
+                    d["risk_tags"] = [raw_tags] if raw_tags else []
+            items.append(d)
+
+        return items, total
+
+
+def get_risk_remediations_stats() -> dict:
+    """Get high-level metrics for the pending risk remediation view."""
+    with db_session() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total_items,
+                COUNT(CASE WHEN r.verify_status IN ('unverified', 'verified_failed') AND r.manual_status != 'ignored' THEN 1 END) as pending_count,
+                COUNT(CASE WHEN r.verify_status = 'verified_failed' THEN 1 END) as failed_count,
+                COUNT(CASE WHEN r.verify_status = 'unverified' THEN 1 END) as unverified_count,
+                COUNT(CASE WHEN r.verify_status IN ('verified_clean', 'page_removed') THEN 1 END) as clean_count,
+                COUNT(DISTINCT CASE WHEN r.verify_status IN ('unverified', 'verified_failed') AND r.manual_status != 'ignored' THEN r.task_id END) as tasks_affected,
+                COUNT(DISTINCT r.domain) as unique_risk_domains,
+                COUNT(DISTINCT r.page_url) as unique_pages
+            FROM risk_page_remediations r
+            JOIN tasks t ON r.task_id = t.id
+            WHERE t.status != 'deleting'
+        """)
+        row = dict(cursor.fetchone())
+
+        cursor.execute("""
+            SELECT r.risk_level, COUNT(*) as cnt
+            FROM risk_page_remediations r
+            JOIN tasks t ON r.task_id = t.id
+            WHERE t.status != 'deleting'
+              AND r.verify_status IN ('unverified', 'verified_failed')
+              AND r.manual_status != 'ignored'
+            GROUP BY r.risk_level
+        """)
+        level_map = {r['risk_level']: r['cnt'] for r in cursor.fetchall()}
+
+        cursor.execute("""
+            SELECT r.task_id, t.name as task_name, COUNT(*) as pending_count
+            FROM risk_page_remediations r
+            JOIN tasks t ON r.task_id = t.id
+            WHERE t.status != 'deleting'
+              AND r.verify_status IN ('unverified', 'verified_failed')
+              AND r.manual_status != 'ignored'
+            GROUP BY r.task_id, t.name
+            ORDER BY pending_count DESC
+            LIMIT 20
+        """)
+        task_summary = [dict(r) for r in cursor.fetchall()]
+
+        return {
+            "total_items": row.get("total_items", 0),
+            "pending_count": row.get("pending_count", 0),
+            "failed_count": row.get("failed_count", 0),
+            "unverified_count": row.get("unverified_count", 0),
+            "clean_count": row.get("clean_count", 0),
+            "tasks_affected": row.get("tasks_affected", 0),
+            "unique_risk_domains": row.get("unique_risk_domains", 0),
+            "unique_pages": row.get("unique_pages", 0),
+            "level_counts": {
+                "critical": level_map.get("critical", 0),
+                "high": level_map.get("high", 0),
+                "medium": level_map.get("medium", 0),
+                "low": level_map.get("low", 0),
+            },
+            "task_summary": task_summary
+        }
+
+
+def get_risk_remediation_by_id(remediation_id: int) -> Optional[dict]:
+    """Fetch a single risk remediation item by ID."""
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT r.*, t.name as task_name, t.target_url as target_site_url
+            FROM risk_page_remediations r
+            JOIN tasks t ON r.task_id = t.id
+            WHERE r.id = ?
+        """, (remediation_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        raw_tags = d.get("risk_tags") or "[]"
+        if isinstance(raw_tags, str):
+            try:
+                d["risk_tags"] = json.loads(raw_tags)
+            except Exception:
+                d["risk_tags"] = [raw_tags] if raw_tags else []
+        return d
+
+
+def update_risk_remediation_verify_result(
+    remediation_id: int,
+    verify_status: str,
+    verify_time: str,
+    verify_detail: str,
+    context_snippet: Optional[str] = None
+):
+    """Update single risk page verification verdict."""
+    with db_session() as conn:
+        cursor = conn.cursor()
+        if context_snippet:
+            cursor.execute("""
+                UPDATE risk_page_remediations
+                SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
+                    context_snippet = ?, updated_at = ?
+                WHERE id = ?
+            """, (verify_status, verify_time, verify_detail, context_snippet, now_iso(), remediation_id))
+        else:
+            cursor.execute("""
+                UPDATE risk_page_remediations
+                SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?, updated_at = ?
+                WHERE id = ?
+            """, (verify_status, verify_time, verify_detail, now_iso(), remediation_id))
+
+
+def batch_update_risk_remediations_manual_status(
+    ids: List[int],
+    manual_status: str,
+    manual_remark: Optional[str] = None
+) -> int:
+    """Batch update manual handling status (e.g. resolved, ignored, in_progress)."""
+    if not ids:
+        return 0
+    with db_session() as conn:
+        cursor = conn.cursor()
+        placeholders = ",".join("?" for _ in ids)
+        now = now_iso()
+        if manual_remark is not None:
+            cursor.execute(f"""
+                UPDATE risk_page_remediations
+                SET manual_status = ?, manual_remark = ?, updated_at = ?
+                WHERE id IN ({placeholders})
+            """, [manual_status, manual_remark, now] + ids)
+        else:
+            cursor.execute(f"""
+                UPDATE risk_page_remediations
+                SET manual_status = ?, updated_at = ?
+                WHERE id IN ({placeholders})
+            """, [manual_status, now] + ids)
+        return cursor.rowcount
+
+
+def get_unverified_risk_remediations(limit: int = 500) -> List[dict]:
+    """Retrieve items requiring periodic automatic re-check."""
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT r.id, r.task_id, r.domain, r.page_url, r.source_type, r.last_verified_at
+            FROM risk_page_remediations r
+            JOIN tasks t ON r.task_id = t.id
+            WHERE t.status != 'deleting'
+              AND r.verify_status IN ('unverified', 'verified_failed')
+              AND r.manual_status != 'ignored'
+            ORDER BY r.last_verified_at ASC NULLS FIRST, r.id ASC
+            LIMIT ?
+        """, (limit,))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def get_risk_remediations_for_export(
+    task_id: Optional[int] = None,
+    verify_status: Optional[str] = None,
+    risk_level: Optional[str] = None
+) -> List[dict]:
+    """Fetch complete remediation rows formatted for task-based Excel/CSV exports."""
+    with db_session() as conn:
+        cursor = conn.cursor()
+        where_clauses = ["t.status != 'deleting'"]
+        params: List[Any] = []
+
+        if task_id:
+            where_clauses.append("r.task_id = ?")
+            params.append(task_id)
+
+        if verify_status:
+            if verify_status == "pending_only":
+                where_clauses.append("r.verify_status IN ('unverified', 'verified_failed')")
+            else:
+                where_clauses.append("r.verify_status = ?")
+                params.append(verify_status)
+
+        if risk_level:
+            if risk_level != "all_risk":
+                where_clauses.append("r.risk_level = ?")
+                params.append(risk_level)
+
+        where_sql = " AND ".join(where_clauses)
+        cursor.execute(f"""
+            SELECT 
+                r.id,
+                r.task_id,
+                t.name as task_name,
+                t.target_url as target_site_url,
+                r.page_url,
+                r.page_title,
+                r.domain,
+                r.root_domain,
+                r.risk_level,
+                r.risk_tags,
+                r.risk_remark,
+                r.source_type,
+                r.context_snippet,
+                r.verify_status,
+                r.last_verified_at,
+                r.last_verify_detail,
+                r.manual_status,
+                r.manual_remark,
+                r.created_at
+            FROM risk_page_remediations r
+            JOIN tasks t ON r.task_id = t.id
+            WHERE {where_sql}
+            ORDER BY r.task_id ASC, r.risk_level ASC, r.id ASC
+        """, params)
+        return [dict(r) for r in cursor.fetchall()]
 
 

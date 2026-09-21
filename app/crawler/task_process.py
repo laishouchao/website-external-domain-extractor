@@ -276,7 +276,6 @@ class TaskWorkerRunner:
             else:
                 self.log("SUCCESS", f"扫描完成！全深度爬取完成，共扫描 {self.pages_crawled} 个页面/静态资源，发现 {self.external_domains_count} 个唯一外部域名，{self.subdomains_count} 个本站子域名。")
 
-            await self.flush_buffer(force=True)
             await asyncio.to_thread(
                 crud.update_task_progress,
                 self.task_id,
@@ -285,6 +284,12 @@ class TaskWorkerRunner:
                 external_domains_count=self.external_domains_count,
                 subdomains_count=self.subdomains_count
             )
+
+            # Auto sync risk pages to remediation table
+            try:
+                await asyncio.to_thread(crud.sync_risk_pages_from_occurrences, self.task_id)
+            except Exception as e:
+                self.log("WARN", f"同步待处置风险页面异常: {e}")
 
             speed_info = self.get_speed()
             self.emit_event("complete", {

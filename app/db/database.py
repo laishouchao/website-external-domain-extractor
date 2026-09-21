@@ -413,6 +413,32 @@ def init_db_postgresql():
         );
         """)
 
+        # Risk page remediations tracking table (Dedicated lightweight remediation workflow table)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS risk_page_remediations (
+            id SERIAL PRIMARY KEY,
+            task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            domain TEXT NOT NULL,
+            root_domain TEXT NOT NULL,
+            page_url TEXT NOT NULL,
+            page_title TEXT DEFAULT '',
+            source_type TEXT NOT NULL DEFAULT 'href',
+            raw_match TEXT NOT NULL DEFAULT '',
+            context_snippet TEXT NOT NULL DEFAULT '',
+            risk_level TEXT NOT NULL,
+            risk_tags TEXT DEFAULT '[]',
+            risk_remark TEXT DEFAULT '',
+            verify_status TEXT NOT NULL DEFAULT 'unverified',
+            last_verified_at TEXT DEFAULT NULL,
+            last_verify_detail TEXT DEFAULT '',
+            manual_status TEXT DEFAULT 'pending',
+            manual_remark TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(task_id, domain, page_url)
+        );
+        """)
+
         # Standard B-Tree Indexes (UNIQUE(task_id, url) already creates an index for sitemap_pages)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_sitemap_task ON sitemap_pages(task_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_task ON external_domains(task_id);")
@@ -431,6 +457,11 @@ def init_db_postgresql():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_verify ON external_domains(task_id, verify_status);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_profile_domain ON domain_risk_profiles(domain);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_profile_level ON domain_risk_profiles(risk_level);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediation_task ON risk_page_remediations(task_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediation_status ON risk_page_remediations(verify_status);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediation_level ON risk_page_remediations(risk_level);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediation_domain ON risk_page_remediations(domain);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediation_manual ON risk_page_remediations(manual_status);")
 
         # GIN Trigram Indexes for Ultra-Fast Substring/Wildcard Domain Lookups
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_trgm_domain ON external_domains USING gin (domain gin_trgm_ops);")
