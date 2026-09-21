@@ -421,9 +421,8 @@ def init_db_postgresql():
         );
         """)
 
-        # Standard B-Tree Indexes
+        # Standard B-Tree Indexes (UNIQUE(task_id, url) already creates an index for sitemap_pages)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_sitemap_task ON sitemap_pages(task_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sitemap_url ON sitemap_pages(task_id, url);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_task ON external_domains(task_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_domain ON external_domains(task_id, domain);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_root ON external_domains(task_id, root_domain);")

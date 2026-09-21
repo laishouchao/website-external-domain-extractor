@@ -155,6 +155,10 @@ def insert_page(task_id: int, url: str, path: str, depth: int, status_code: int,
     with db_session() as conn:
         cursor = conn.cursor()
         now = now_iso()
+        if url and len(url) > 800:
+            b = url.encode("utf-8", errors="ignore")
+            if len(b) > 2000:
+                url = b[:2000].decode("utf-8", errors="ignore")
         cursor.execute("""
             INSERT INTO sitemap_pages (
                 task_id, url, path, depth, status_code, content_type,
@@ -182,6 +186,11 @@ def save_crawl_result(task_id: int, page_data: dict, external_domains: List[dict
         now = now_iso()
 
         # 1. Insert sitemap page
+        p_url = page_data.get('url', '')
+        if p_url and len(p_url) > 800:
+            b = p_url.encode("utf-8", errors="ignore")
+            if len(b) > 2000:
+                p_url = b[:2000].decode("utf-8", errors="ignore")
         cursor.execute("""
             INSERT INTO sitemap_pages (
                 task_id, url, path, depth, status_code, content_type,
@@ -197,7 +206,7 @@ def save_crawl_result(task_id: int, page_data: dict, external_domains: List[dict
                 error = excluded.error
         """, (
             task_id,
-            page_data['url'],
+            p_url,
             page_data['path'],
             page_data['depth'],
             page_data['status_code'],
@@ -389,10 +398,17 @@ def save_crawl_results_batch(
         now = now_iso()
 
         # 1. Insert sitemap pages
+        def _safe_url(u: str) -> str:
+            if u and len(u) > 800:
+                b = u.encode("utf-8", errors="ignore")
+                if len(b) > 2000:
+                    return b[:2000].decode("utf-8", errors="ignore")
+            return u
+
         pages_to_insert = [
             (
                 task_id,
-                item['page_data']['url'],
+                _safe_url(item['page_data']['url']),
                 item['page_data']['path'],
                 item['page_data']['depth'],
                 item['page_data']['status_code'],

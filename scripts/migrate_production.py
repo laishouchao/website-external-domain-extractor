@@ -224,10 +224,9 @@ def init_pg_schema(pg_conn):
     );
     """)
 
-    # 创建标准 B-Tree 索引
+    # 创建标准 B-Tree 索引 (sitemap_pages 已有 UNIQUE(task_id, url)，无需重复创建相同索引)
     indexes = [
         "CREATE INDEX IF NOT EXISTS idx_sitemap_task ON sitemap_pages(task_id);",
-        "CREATE INDEX IF NOT EXISTS idx_sitemap_url ON sitemap_pages(task_id, url);",
         "CREATE INDEX IF NOT EXISTS idx_extdomains_task ON external_domains(task_id);",
         "CREATE INDEX IF NOT EXISTS idx_extdomains_domain ON external_domains(task_id, domain);",
         "CREATE INDEX IF NOT EXISTS idx_extdomains_root ON external_domains(task_id, root_domain);",
@@ -335,6 +334,23 @@ def migrate_table(sqlite_conn, pg_conn, table: str, batch_size: int = 10000, tru
         rows = s_cur.fetchmany(batch_size)
         if not rows:
             break
+
+        # 针对含 url 字段的表进行安全截断（PostgreSQL B-Tree 索引限制最大 2704 字节）
+        # 采用 O(1) 字符长度前置筛选，对 99.99% 的普通 URL 实现零对象分配开销
+        if "url" in cols:
+            url_idx = cols.index("url")
+            sanitized_rows = []
+            for r in rows:
+                val = r[url_idx]
+                if isinstance(val, str) and len(val) > 800:
+                    b = val.encode("utf-8", errors="ignore")
+                    if len(b) > 2000:
+                        r_list = list(r)
+                        r_list[url_idx] = b[:2000].decode("utf-8", errors="ignore")
+                        sanitized_rows.append(tuple(r_list))
+                        continue
+                sanitized_rows.append(r)
+            rows = sanitized_rows
 
         # PostgreSQL 单次查询参数上限 65535，单批限制参数在 10000 左右
         chunk_size = max(1, 10000 // len(cols))
