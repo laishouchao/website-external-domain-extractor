@@ -280,20 +280,32 @@ def format_eta(seconds: float) -> str:
         return f"{s}s"
 
 
+def get_approx_row_count(s_cur, table: str) -> Optional[int]:
+    """通过主键索引毫秒级获取行数估算，避免在 80GB+ 文件上执行全表 COUNT(*) 导致卡死数分钟"""
+    try:
+        s_cur.execute(f"SELECT MAX(_rowid_) FROM {table}")
+        res = s_cur.fetchone()
+        if res and res[0] is not None:
+            return int(res[0])
+    except Exception:
+        pass
+    return None
+
+
 def migrate_table(sqlite_conn, pg_conn, table: str, batch_size: int = 10000, truncate_target: bool = False):
     """流式迁移单个表，采用多行 VALUES 批量高速入库"""
     s_cur = sqlite_conn.cursor()
     p_cur = pg_conn.cursor()
 
+    # 获取字段列表
     try:
-        s_cur.execute(f"SELECT COUNT(*) FROM {table}")
-        total_rows = s_cur.fetchone()[0]
+        s_cur.execute(f"PRAGMA table_info({table})")
+        cols_info = s_cur.fetchall()
+        if not cols_info:
+            print(f"[SKIP] 表 '{table}' 在源 SQLite 中不存在，已跳过。")
+            return
     except Exception as e:
-        print(f"[SKIP] 表 '{table}' 在源 SQLite 中不存在或无法读取: {e}")
-        return
-
-    if total_rows == 0:
-        print(f"[SKIP] 表 '{table}' 为空 (0 行)，已跳过。")
+        print(f"[SKIP] 表 '{table}' 读取失败: {e}")
         return
 
     # 若指定清空目标表
@@ -302,19 +314,22 @@ def migrate_table(sqlite_conn, pg_conn, table: str, batch_size: int = 10000, tru
         p_cur.execute(f"TRUNCATE TABLE {table} CASCADE;")
         pg_conn.commit()
 
-    # 获取字段列表
-    s_cur.execute(f"PRAGMA table_info({table})")
-    cols_info = s_cur.fetchall()
     cols = [col[1] for col in cols_info]
     cols_str = ", ".join(cols)
     placeholders = ", ".join(["%s"] * len(cols))
     row_placeholder = f"({placeholders})"
 
-    print(f"\n>> 开始迁移表 '{table}' (共 {total_rows:,} 行)...")
+    # 毫秒级快速探测数据规模（免去全表扫描）
+    approx_total = get_approx_row_count(s_cur, table)
+    if approx_total:
+        print(f"\n>> 开始流式迁移表 '{table}' (预估规模约 {approx_total:,} 行)...")
+    else:
+        print(f"\n>> 开始流式迁移表 '{table}'...")
+
+    t0 = time.time()
     s_cur.execute(f"SELECT {cols_str} FROM {table}")
 
     migrated = 0
-    t0 = time.time()
 
     while True:
         rows = s_cur.fetchmany(batch_size)
@@ -335,14 +350,20 @@ def migrate_table(sqlite_conn, pg_conn, table: str, batch_size: int = 10000, tru
 
         elapsed = time.time() - t0
         speed = int(migrated / elapsed) if elapsed > 0 else 0
-        pct = (migrated / total_rows) * 100
-        eta_sec = (total_rows - migrated) / speed if speed > 0 else 0
-        eta_str = format_eta(eta_sec)
 
-        sys.stdout.write(
-            f"\r  进度: {migrated:,}/{total_rows:,} ({pct:5.1f}%) | "
-            f"速率: {speed:6,d} 行/秒 | 耗时: {int(elapsed)}s | 剩余: {eta_str}   "
-        )
+        if approx_total and approx_total > 0:
+            pct = min(100.0, (migrated / approx_total) * 100)
+            eta_sec = (approx_total - migrated) / speed if speed > 0 and approx_total > migrated else 0
+            eta_str = format_eta(eta_sec)
+            sys.stdout.write(
+                f"\r  进度: {migrated:,}/{approx_total:,} ({pct:5.1f}%) | "
+                f"速率: {speed:6,d} 行/秒 | 耗时: {int(elapsed)}s | 剩余: {eta_str}   "
+            )
+        else:
+            sys.stdout.write(
+                f"\r  进度: 已迁移 {migrated:,} 行 | "
+                f"速率: {speed:6,d} 行/秒 | 耗时: {int(elapsed)}s   "
+            )
         sys.stdout.flush()
 
     total_time = time.time() - t0
@@ -474,7 +495,15 @@ def main():
         print(f"[ERROR] 连接目标 PostgreSQL 失败: {e}")
         sys.exit(1)
 
-    sqlite_conn = sqlite3.connect(str(sqlite_path))
+    try:
+        sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True, timeout=60.0)
+    except Exception:
+        sqlite_conn = sqlite3.connect(str(sqlite_path), timeout=60.0)
+    try:
+        sqlite_conn.execute("PRAGMA query_only = ON;")
+        sqlite_conn.execute("PRAGMA busy_timeout = 60000;")
+    except Exception:
+        pass
 
     # 3. 如果只是仅校验模式
     if args.verify_only:
