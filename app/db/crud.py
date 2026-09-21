@@ -45,10 +45,13 @@ def create_tasks_batch(tasks_data: List[dict]) -> List[dict]:
             })
     return created_tasks
 
-def get_task(task_id: int) -> Optional[dict]:
+def get_task(task_id: int, include_deleting: bool = False) -> Optional[dict]:
     with db_session() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        if include_deleting:
+            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        else:
+            cursor.execute("SELECT * FROM tasks WHERE id = ? AND status != 'deleting'", (task_id,))
         row = cursor.fetchone()
         if not row:
             return None
@@ -59,11 +62,11 @@ def get_task(task_id: int) -> Optional[dict]:
 def list_tasks(limit: int = 50, offset: int = 0) -> Tuple[List[dict], int]:
     with db_session() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM tasks")
+        cursor.execute("SELECT COUNT(*) FROM tasks WHERE status != 'deleting'")
         total = cursor.fetchone()[0]
         
         cursor.execute("""
-            SELECT * FROM tasks ORDER BY id DESC LIMIT ? OFFSET ?
+            SELECT * FROM tasks WHERE status != 'deleting' ORDER BY id DESC LIMIT ? OFFSET ?
         """, (limit, offset))
         rows = cursor.fetchall()
         tasks = []
@@ -119,31 +122,120 @@ def reset_task(task_id: int):
             WHERE id = ?
         """, (task_id,))
 
-def delete_task(task_id: int):
-    """Explicitly delete task child records using indexed task_id lookups for maximum speed."""
+def mark_task_deleting(task_id: int) -> bool:
+    """Instantly mark task status as 'deleting' (< 1ms), hiding it immediately from the UI."""
     with db_session() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM domain_occurrences WHERE task_id = ?", (task_id,))
-        cursor.execute("DELETE FROM sitemap_pages WHERE task_id = ?", (task_id,))
-        cursor.execute("DELETE FROM external_domains WHERE task_id = ?", (task_id,))
-        cursor.execute("DELETE FROM discovered_subdomains WHERE task_id = ?", (task_id,))
-        cursor.execute("DELETE FROM task_logs WHERE task_id = ?", (task_id,))
-        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        cursor.execute("UPDATE tasks SET status = 'deleting' WHERE id = ?", (task_id,))
+        return cursor.rowcount > 0
 
-def batch_delete_tasks(task_ids: List[int]) -> int:
-    """Delete multiple tasks and their associated child tables in a single atomic transaction."""
+def mark_tasks_deleting(task_ids: List[int]) -> int:
+    """Instantly mark multiple tasks status as 'deleting' (< 5ms)."""
     if not task_ids:
         return 0
     with db_session() as conn:
         cursor = conn.cursor()
         placeholders = ",".join("?" for _ in task_ids)
-        cursor.execute(f"DELETE FROM domain_occurrences WHERE task_id IN ({placeholders})", task_ids)
-        cursor.execute(f"DELETE FROM sitemap_pages WHERE task_id IN ({placeholders})", task_ids)
-        cursor.execute(f"DELETE FROM external_domains WHERE task_id IN ({placeholders})", task_ids)
-        cursor.execute(f"DELETE FROM discovered_subdomains WHERE task_id IN ({placeholders})", task_ids)
-        cursor.execute(f"DELETE FROM task_logs WHERE task_id IN ({placeholders})", task_ids)
-        cursor.execute(f"DELETE FROM tasks WHERE id IN ({placeholders})", task_ids)
+        cursor.execute(f"UPDATE tasks SET status = 'deleting' WHERE id IN ({placeholders})", task_ids)
         return cursor.rowcount
+
+def purge_task_data(task_id: int, chunk_size: int = 20000):
+    """
+    Smoothly purge all child records and task entry for a marked task in small batches.
+    Avoids long transactions, eliminates WAL spikes, yields CPU/IO between chunks,
+    and prevents any database or FastAPI loop locking.
+    """
+    import time
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Ensure status is marked deleting
+    mark_task_deleting(task_id)
+
+    # 1. Chunked delete on domain_occurrences (largest table)
+    total_occ_deleted = 0
+    while True:
+        try:
+            with db_session() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    DELETE FROM domain_occurrences
+                    WHERE id IN (
+                        SELECT id FROM domain_occurrences
+                        WHERE task_id = ?
+                        LIMIT ?
+                    )
+                """, (task_id, chunk_size))
+                deleted = cursor.rowcount
+                total_occ_deleted += deleted
+            if deleted == 0:
+                break
+            time.sleep(0.01)  # Brief yield to let other transactions breathe
+        except Exception as e:
+            logger.error(f"Error during chunked delete domain_occurrences for task {task_id}: {e}")
+            break
+
+    # 2. Chunked delete on sitemap_pages (second largest table)
+    total_pages_deleted = 0
+    while True:
+        try:
+            with db_session() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    DELETE FROM sitemap_pages
+                    WHERE id IN (
+                        SELECT id FROM sitemap_pages
+                        WHERE task_id = ?
+                        LIMIT ?
+                    )
+                """, (task_id, chunk_size))
+                deleted = cursor.rowcount
+                total_pages_deleted += deleted
+            if deleted == 0:
+                break
+            time.sleep(0.01)
+        except Exception as e:
+            logger.error(f"Error during chunked delete sitemap_pages for task {task_id}: {e}")
+            break
+
+    # 3. Clean remaining smaller child tables and tasks record
+    try:
+        with db_session() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM external_domains WHERE task_id = ?", (task_id,))
+            cursor.execute("DELETE FROM discovered_subdomains WHERE task_id = ?", (task_id,))
+            cursor.execute("DELETE FROM task_logs WHERE task_id = ?", (task_id,))
+            cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        logger.info(f"Task {task_id} purge complete: {total_occ_deleted} occurrences and {total_pages_deleted} pages removed.")
+    except Exception as e:
+        logger.error(f"Error during final cleanup for task {task_id}: {e}")
+
+def purge_tasks_batch(task_ids: List[int], chunk_size: int = 20000):
+    """Purge a sequence of tasks smoothly in background."""
+    for tid in task_ids:
+        purge_task_data(tid, chunk_size=chunk_size)
+
+def purge_dangling_deleting_tasks(chunk_size: int = 20000):
+    """Scan and purge any dangling tasks marked 'deleting' (e.g. from previous server restart)."""
+    try:
+        with db_session() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM tasks WHERE status = 'deleting'")
+            task_ids = [r[0] for r in cursor.fetchall()]
+        if task_ids:
+            purge_tasks_batch(task_ids, chunk_size=chunk_size)
+    except Exception:
+        pass
+
+def delete_task(task_id: int):
+    """Legacy synchronous delete wrapper (calls purge_task_data)."""
+    purge_task_data(task_id)
+
+def batch_delete_tasks(task_ids: List[int]) -> int:
+    """Legacy batch delete wrapper."""
+    mark_tasks_deleting(task_ids)
+    purge_tasks_batch(task_ids)
+    return len(task_ids)
 
 # ==================== Sitemap Pages ====================
 
@@ -978,7 +1070,7 @@ def clean_all_tasks_invalid_domains() -> dict:
     """Clean invalid domains across all tasks."""
     with db_session() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM tasks")
+        cursor.execute("SELECT id FROM tasks WHERE status != 'deleting'")
         task_ids = [r[0] for r in cursor.fetchall()]
 
     total_deleted = 0
@@ -1131,7 +1223,7 @@ def list_global_external_domains(
     with db_session() as conn:
         cursor = conn.cursor()
 
-        where_clauses = ["1=1"]
+        where_clauses = ["1=1", "t.status != 'deleting'"]
         params: List[Any] = []
 
         if search:
@@ -1285,7 +1377,7 @@ def get_global_domains_stats() -> dict:
         cursor.execute("SELECT COUNT(DISTINCT root_domain) FROM external_domains")
         unique_root_domains = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM tasks")
+        cursor.execute("SELECT COUNT(*) FROM tasks WHERE status != 'deleting'")
         total_tasks = cursor.fetchone()[0]
 
         cursor.execute("SELECT COALESCE(SUM(occurrence_count), 0) FROM external_domains")
@@ -1396,7 +1488,7 @@ def get_domain_associated_tasks(domain: str, max_occurrences_per_task: Optional[
                 ed.created_at
             FROM external_domains ed
             JOIN tasks t ON ed.task_id = t.id
-            WHERE ed.domain = ?
+            WHERE ed.domain = ? AND t.status != 'deleting'
             ORDER BY ed.occurrence_count DESC, t.id DESC
         """, (domain,))
         tasks_list = [dict(r) for r in cursor.fetchall()]

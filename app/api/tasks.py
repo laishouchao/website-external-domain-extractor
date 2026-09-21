@@ -1,6 +1,6 @@
 from typing import Optional, Dict, Any, List
 from urllib.parse import urlparse
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, HttpUrl, Field
 from app.db import crud
 from app.crawler.engine import CrawlEngine
@@ -134,7 +134,7 @@ async def create_batch_tasks(req: TaskBatchCreateRequest):
     }
 
 @router.post("/batch-action")
-async def execute_batch_action(req: BatchActionRequest):
+async def execute_batch_action(req: BatchActionRequest, background_tasks: BackgroundTasks):
     engine = CrawlEngine.get_instance()
     action = req.action.lower()
     affected = 0
@@ -142,8 +142,9 @@ async def execute_batch_action(req: BatchActionRequest):
     if action == "delete":
         for tid in req.task_ids:
             await engine.cancel_and_clean_task(tid)
-        affected = crud.batch_delete_tasks(req.task_ids)
-        return {"success": True, "action": "delete", "affected_count": affected}
+        affected = crud.mark_tasks_deleting(req.task_ids)
+        background_tasks.add_task(crud.purge_tasks_batch, req.task_ids)
+        return {"success": True, "action": "delete", "affected_count": affected, "message": "任务已标记删除，后台正在平滑清理数据"}
 
     for tid in req.task_ids:
         task = crud.get_task(tid)
@@ -223,14 +224,15 @@ async def retry_task(task_id: int):
     return {"success": True, "message": "Task restarted"}
 
 @router.delete("/{task_id}")
-async def delete_task(task_id: int):
+async def delete_task(task_id: int, background_tasks: BackgroundTasks):
     task = crud.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     engine = CrawlEngine.get_instance()
     await engine.cancel_and_clean_task(task_id)
-    crud.delete_task(task_id)
-    return {"success": True, "message": "Task deleted"}
+    crud.mark_task_deleting(task_id)
+    background_tasks.add_task(crud.purge_task_data, task_id)
+    return {"success": True, "message": "任务已标记删除，后台正在平滑清理"}
 
 # Convenient Export Aliases
 from app.api.domains import export_domains_txt, export_domains_csv, export_domains_json

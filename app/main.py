@@ -5,7 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+import asyncio
 from app.db.database import init_db
+from app.db import crud
 from app.api.tasks import router as tasks_router
 from app.api.sitemap import router as sitemap_router
 from app.api.domains import router as domains_router
@@ -18,6 +20,8 @@ from app.api.events import router as events_router
 async def lifespan(app: FastAPI):
     # Startup: Initialize Database
     init_db()
+    # Resume cleaning any dangling tasks stuck in 'deleting' status from previous runs
+    asyncio.create_task(asyncio.to_thread(crud.purge_dangling_deleting_tasks))
     yield
     # Shutdown
 
