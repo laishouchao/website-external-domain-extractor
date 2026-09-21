@@ -64,3 +64,5 @@ export const useUiStore = defineStore('ui', () => {
     removeToast
   }
 })
+
+export const useUIStore = useUiStore

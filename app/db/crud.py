@@ -1960,6 +1960,17 @@ def sync_risk_profiles_to_history(domains_filter: Optional[List[str]] = None) ->
                     SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
                     WHERE {where_clause}
                 """, (level, tags, remark, dom, dom, f"%.{dom}"))
+                if level in ('safe', 'pending'):
+                    cursor.execute("""
+                        DELETE FROM risk_page_remediations
+                        WHERE (root_domain = ? OR domain = ? OR domain LIKE ?)
+                    """, (dom, dom, f"%.{dom}"))
+                else:
+                    cursor.execute("""
+                        UPDATE risk_page_remediations
+                        SET risk_level = ?, risk_tags = ?, risk_remark = ?
+                        WHERE (root_domain = ? OR domain = ? OR domain LIKE ?)
+                    """, (level, tags, remark, dom, dom, f"%.{dom}"))
             else:
                 where_clause = "domain = ?"
                 if not domains_filter:
@@ -1969,7 +1980,21 @@ def sync_risk_profiles_to_history(domains_filter: Optional[List[str]] = None) ->
                     SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
                     WHERE {where_clause}
                 """, (level, tags, remark, dom))
+                if level in ('safe', 'pending'):
+                    cursor.execute("""
+                        DELETE FROM risk_page_remediations
+                        WHERE domain = ?
+                    """, (dom,))
+                else:
+                    cursor.execute("""
+                        UPDATE risk_page_remediations
+                        SET risk_level = ?, risk_tags = ?, risk_remark = ?
+                        WHERE domain = ?
+                    """, (level, tags, remark, dom))
             total_matched += cursor.rowcount
+
+        if domains_filter and any(p.get("risk_level") in ('critical', 'high', 'medium', 'low') for p in profiles):
+            sync_risk_pages_from_occurrences()
 
         return {"profile_count": len(profiles), "updated_domains": total_matched}
 
