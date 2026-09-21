@@ -28,11 +28,30 @@ export const useRemediationStore = defineStore('remediation', () => {
   const timer = ref({
     is_running: true,
     is_checking: false,
-    interval_seconds: 600,
-    remaining_seconds: 600,
+    interval_seconds: 3600,
+    remaining_seconds: 3600,
     last_run_time: null,
     next_run_time: null,
-    last_run_stats: {}
+    last_run_stats: {},
+    current_progress: {
+      is_checking: false,
+      check_type: 'regular',
+      total: 0,
+      current: 0,
+      cleaned_count: 0,
+      failed_count: 0,
+      removed_count: 0,
+      error_count: 0,
+      percentage: 0,
+      cleaned_ratio: 0.0,
+      failed_ratio: 0.0
+    },
+    rollback_audit: {
+      is_auditing: false,
+      last_audit_time: null,
+      next_audit_time: null,
+      last_stats: null
+    }
   })
 
   const filters = ref({
@@ -46,6 +65,7 @@ export const useRemediationStore = defineStore('remediation', () => {
   const selectedIds = ref([])
   const verifyingId = ref(null)
   const isTriggeringBatch = ref(false)
+  const isTriggeringRollback = ref(false)
   const isSyncing = ref(false)
 
   const loadPages = async (p = 1) => {
@@ -128,6 +148,20 @@ export const useRemediationStore = defineStore('remediation', () => {
     }
   }
 
+  const triggerRollbackAudit = async () => {
+    if (isTriggeringRollback.value) return
+    isTriggeringRollback.value = true
+    try {
+      const res = await client.post('/risk-remediation/trigger-rollback-audit')
+      ui.showToast(res.message || '已触发防回滚再测试', 'success')
+      await loadTimerStatus()
+    } catch (e) {
+      ui.showToast('触发防回滚再测试失败: ' + e.message, 'error')
+    } finally {
+      isTriggeringRollback.value = false
+    }
+  }
+
   const syncOccurrences = async () => {
     if (isSyncing.value) return
     isSyncing.value = true
@@ -171,12 +205,14 @@ export const useRemediationStore = defineStore('remediation', () => {
     selectedIds,
     verifyingId,
     isTriggeringBatch,
+    isTriggeringRollback,
     isSyncing,
     loadPages,
     loadStats,
     loadTimerStatus,
     verifySingle,
     triggerBatchVerify,
+    triggerRollbackAudit,
     syncOccurrences,
     batchUpdateStatus
   }

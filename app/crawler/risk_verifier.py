@@ -146,15 +146,18 @@ async def verify_single_risk_page(
 
 class PeriodicRiskVerifier:
     """
-    Background scheduler that periodically re-verifies pending risk pages (every 10 minutes).
-    Supports manual trigger, progress monitoring, and concurrent HTTP requests.
+    Background scheduler that periodically re-verifies pending risk pages (every 1 hour).
+    Also runs a rollback re-audit every 2 days at 15:00:00 for remediated pages.
+    Supports manual trigger, real-time progress monitoring, and concurrent HTTP requests.
     """
     _instance: Optional["PeriodicRiskVerifier"] = None
 
-    def __init__(self, interval_seconds: int = 600):
+    def __init__(self, interval_seconds: int = 3600):
         self.interval_seconds = interval_seconds
         self._running = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._task: Optional[asyncio.Task] = None
+        self._rollback_task: Optional[asyncio.Task] = None
         self._trigger_event = asyncio.Event()
         self.is_checking = False
         self.last_run_time: Optional[str] = None
@@ -168,36 +171,100 @@ class PeriodicRiskVerifier:
             "duration_seconds": 0.0,
             "finished_at": None
         }
+        self.current_progress: Dict[str, Any] = {
+            "is_checking": False,
+            "check_type": "regular",
+            "total": 0,
+            "current": 0,
+            "cleaned_count": 0,
+            "failed_count": 0,
+            "removed_count": 0,
+            "error_count": 0,
+            "percentage": 0.0,
+            "cleaned_ratio": 0.0,
+            "failed_ratio": 0.0,
+            "started_at": None
+        }
+        self.rollback_audit: Dict[str, Any] = {
+            "is_auditing": False,
+            "last_audit_time": None,
+            "next_audit_time": self._calculate_next_rollback_time(),
+            "last_stats": None
+        }
 
     @classmethod
     def get_instance(cls) -> "PeriodicRiskVerifier":
         if cls._instance is None:
-            cls._instance = PeriodicRiskVerifier(interval_seconds=600)
+            cls._instance = PeriodicRiskVerifier(interval_seconds=3600)
         return cls._instance
 
+    def _calculate_next_rollback_time(self, last_audit_dt: Optional[datetime] = None) -> str:
+        """Calculate the next scheduled rollback audit time (every 2 days at 15:00:00)."""
+        now = datetime.now()
+        target_hour = 15
+        target_minute = 0
+        if last_audit_dt:
+            candidate = datetime.combine(last_audit_dt.date() + timedelta(days=2), datetime.min.time()).replace(hour=target_hour, minute=target_minute, second=0)
+            if candidate <= now:
+                today_target = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+                if now < today_target and (now.date() - last_audit_dt.date()).days >= 2:
+                    candidate = today_target
+                else:
+                    candidate = today_target + timedelta(days=2)
+        else:
+            today_target = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+            if now < today_target:
+                candidate = today_target
+            else:
+                candidate = today_target + timedelta(days=2)
+        return candidate.strftime("%Y-%m-%d %H:%M:%S")
+
     def start(self):
-        """Start the background verification loop."""
+        """Start the background verification and rollback audit loops."""
         if self._running:
             return
         self._running = True
-        self._update_next_run_time()
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
         self._task = asyncio.create_task(self._run_loop())
-        logger.info(f"PeriodicRiskVerifier started. Interval: {self.interval_seconds}s (10 min).")
+        self._rollback_task = asyncio.create_task(self._rollback_scheduler_loop())
+        logger.info(f"PeriodicRiskVerifier started. Interval: {self.interval_seconds}s (1 hour). Rollback audit target: {self.rollback_audit.get('next_audit_time')}")
 
     def stop(self):
-        """Stop the background loop."""
+        """Stop the background loops."""
         self._running = False
         self._trigger_event.set()
         if self._task and not self._task.done():
             self._task.cancel()
+        if self._rollback_task and not self._rollback_task.done():
+            self._rollback_task.cancel()
         logger.info("PeriodicRiskVerifier stopped.")
 
     def trigger_now(self) -> Dict[str, Any]:
         """Manually trigger an immediate verification cycle."""
-        if self.is_checking:
-            return {"status": "busy", "message": "校验任务已在执行中，请稍候"}
-        self._trigger_event.set()
+        if self.is_checking or self.rollback_audit.get("is_auditing"):
+            return {"status": "busy", "message": "复测或防回滚检测已在执行中，请稍候"}
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._trigger_event.set)
+        else:
+            self._trigger_event.set()
         return {"status": "triggered", "message": "已触发全量待复测风险页面校验"}
+
+    def trigger_rollback_now(self) -> Dict[str, Any]:
+        """Manually trigger an immediate rollback re-audit cycle for remediated pages."""
+        if self.is_checking or self.rollback_audit.get("is_auditing"):
+            return {"status": "busy", "message": "复测或防回滚检测已在执行中，请稍候"}
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._run_rollback_audit_cycle(), self._loop)
+        else:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._run_rollback_audit_cycle())
+            except Exception:
+                asyncio.create_task(self._run_rollback_audit_cycle())
+        return {"status": "triggered", "message": "已触发防回滚再测试（全量已修复记录复核）"}
 
     def _update_next_run_time(self):
         next_dt = datetime.now() + timedelta(seconds=self.interval_seconds)
@@ -205,7 +272,7 @@ class PeriodicRiskVerifier:
 
     def get_status(self) -> Dict[str, Any]:
         remaining_seconds = 0
-        if self.next_run_time:
+        if self.next_run_time and not self.is_checking:
             try:
                 nxt = datetime.strptime(self.next_run_time, "%Y-%m-%d %H:%M:%S")
                 remaining_seconds = max(0, int((nxt - datetime.now()).total_seconds()))
@@ -219,7 +286,9 @@ class PeriodicRiskVerifier:
             "remaining_seconds": remaining_seconds,
             "last_run_time": self.last_run_time,
             "next_run_time": self.next_run_time,
-            "last_run_stats": self.last_run_stats
+            "last_run_stats": self.last_run_stats,
+            "current_progress": self.current_progress,
+            "rollback_audit": self.rollback_audit
         }
 
     async def _run_loop(self):
@@ -233,6 +302,7 @@ class PeriodicRiskVerifier:
             except Exception as e:
                 logger.error(f"Error during risk verification cycle: {e}", exc_info=True)
 
+            # Update next run time strictly 1 hour after cycle finishes
             self._update_next_run_time()
 
             try:
@@ -242,12 +312,34 @@ class PeriodicRiskVerifier:
             except asyncio.TimeoutError:
                 pass
 
+    async def _rollback_scheduler_loop(self):
+        # Check every 30s if scheduled rollback audit time has arrived
+        await asyncio.sleep(5)
+        while self._running:
+            try:
+                now = datetime.now()
+                target_str = self.rollback_audit.get("next_audit_time")
+                if target_str:
+                    target_dt = datetime.strptime(target_str, "%Y-%m-%d %H:%M:%S")
+                    if now >= target_dt and not self.is_checking and not self.rollback_audit.get("is_auditing"):
+                        logger.info(f"Rollback audit triggered by schedule at {now}")
+                        await self._run_rollback_audit_cycle()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in rollback scheduler loop: {e}", exc_info=True)
+            await asyncio.sleep(30)
+
     async def _run_verification_cycle(self):
-        if self.is_checking:
+        if self.is_checking or self.rollback_audit.get("is_auditing"):
             return
         self.is_checking = True
         t0 = datetime.now()
-        self.last_run_time = t0.strftime("%Y-%m-%d %H:%M:%S")
+        start_str = t0.strftime("%Y-%m-%d %H:%M:%S")
+        self.last_run_time = start_str
+        self.current_progress["is_checking"] = True
+        self.current_progress["check_type"] = "regular"
+        self.current_progress["started_at"] = start_str
 
         try:
             # Step 1: Lightweight sync from occurrences (run in worker thread)
@@ -257,7 +349,7 @@ class PeriodicRiskVerifier:
                 logger.warning(f"Error syncing risk pages before verification: {e}")
 
             # Step 2: Fetch pending / failed items to verify (run in worker thread)
-            pending_items = await asyncio.to_thread(crud.get_unverified_risk_remediations, 100)
+            pending_items = await asyncio.to_thread(crud.get_unverified_risk_remediations, 500)
             if not pending_items:
                 self.last_run_stats = {
                     "total_tested": 0,
@@ -268,8 +360,38 @@ class PeriodicRiskVerifier:
                     "duration_seconds": round((datetime.now() - t0).total_seconds(), 2),
                     "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
+                self.current_progress = {
+                    "is_checking": False,
+                    "check_type": "regular",
+                    "total": 0,
+                    "current": 0,
+                    "cleaned_count": 0,
+                    "failed_count": 0,
+                    "removed_count": 0,
+                    "error_count": 0,
+                    "percentage": 100.0,
+                    "cleaned_ratio": 0.0,
+                    "failed_ratio": 0.0,
+                    "started_at": start_str
+                }
                 return
 
+            self.current_progress = {
+                "is_checking": True,
+                "check_type": "regular",
+                "total": len(pending_items),
+                "current": 0,
+                "cleaned_count": 0,
+                "failed_count": 0,
+                "removed_count": 0,
+                "error_count": 0,
+                "percentage": 0.0,
+                "cleaned_ratio": 0.0,
+                "failed_ratio": 0.0,
+                "started_at": start_str
+            }
+
+            progress_lock = asyncio.Lock()
             semaphore = asyncio.Semaphore(8)  # max 8 concurrent requests
             limits = httpx.Limits(max_keepalive_connections=15, max_connections=20)
             async with httpx.AsyncClient(
@@ -284,7 +406,26 @@ class PeriodicRiskVerifier:
 
                 async def sem_worker(item):
                     async with semaphore:
-                        return await verify_single_risk_page(item["id"], client=client)
+                        res = await verify_single_risk_page(item["id"], client=client)
+                        async with progress_lock:
+                            self.current_progress["current"] += 1
+                            st = res.get("verify_status")
+                            if st == "verified_clean":
+                                self.current_progress["cleaned_count"] += 1
+                            elif st == "page_removed":
+                                self.current_progress["removed_count"] += 1
+                            elif st == "verified_failed":
+                                self.current_progress["failed_count"] += 1
+                            else:
+                                self.current_progress["error_count"] += 1
+
+                            cur = self.current_progress["current"]
+                            tot = self.current_progress["total"]
+                            self.current_progress["percentage"] = round((cur / tot) * 100, 1) if tot > 0 else 100.0
+                            repaired = self.current_progress["cleaned_count"] + self.current_progress["removed_count"]
+                            self.current_progress["cleaned_ratio"] = round((repaired / cur) * 100, 1) if cur > 0 else 0.0
+                            self.current_progress["failed_ratio"] = round((self.current_progress["failed_count"] / cur) * 100, 1) if cur > 0 else 0.0
+                        return res
 
                 tasks = [asyncio.create_task(sem_worker(item)) for item in pending_items]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -309,3 +450,130 @@ class PeriodicRiskVerifier:
 
         finally:
             self.is_checking = False
+            self.current_progress["is_checking"] = False
+
+    async def _run_rollback_audit_cycle(self):
+        """Re-verify all remediated (clean/removed) records every 2 days at 15:00:00 to detect rollback/regression."""
+        if self.is_checking or self.rollback_audit.get("is_auditing"):
+            return
+        self.rollback_audit["is_auditing"] = True
+        self.is_checking = True
+        t0 = datetime.now()
+        start_str = t0.strftime("%Y-%m-%d %H:%M:%S")
+        self.current_progress["is_checking"] = True
+        self.current_progress["check_type"] = "rollback"
+        self.current_progress["started_at"] = start_str
+
+        try:
+            # Fetch remediated items (verified_clean, page_removed)
+            remediated_items = await asyncio.to_thread(crud.get_remediated_risk_remediations, 1000)
+            if not remediated_items:
+                finish_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.rollback_audit["last_audit_time"] = finish_str
+                self.rollback_audit["next_audit_time"] = self._calculate_next_rollback_time(datetime.now())
+                self.rollback_audit["last_stats"] = {
+                    "total_tested": 0,
+                    "clean_preserved": 0,
+                    "rollback_detected": 0,
+                    "page_removed": 0,
+                    "error_count": 0,
+                    "duration_seconds": 0.0,
+                    "finished_at": finish_str
+                }
+                return
+
+            self.current_progress = {
+                "is_checking": True,
+                "check_type": "rollback",
+                "total": len(remediated_items),
+                "current": 0,
+                "cleaned_count": 0,
+                "failed_count": 0,
+                "removed_count": 0,
+                "error_count": 0,
+                "percentage": 0.0,
+                "cleaned_ratio": 0.0,
+                "failed_ratio": 0.0,
+                "started_at": start_str
+            }
+
+            progress_lock = asyncio.Lock()
+            semaphore = asyncio.Semaphore(8)
+            limits = httpx.Limits(max_keepalive_connections=15, max_connections=20)
+
+            async with httpx.AsyncClient(
+                verify=False,
+                timeout=8.0,
+                limits=limits,
+                follow_redirects=True,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 (RiskRollbackAuditor)"
+                }
+            ) as client:
+
+                async def sem_worker(item):
+                    async with semaphore:
+                        res = await verify_single_risk_page(item["id"], client=client)
+                        st = res.get("verify_status")
+
+                        # If rollback is detected (domain reappeared in page source)
+                        if st == "verified_failed":
+                            try:
+                                await asyncio.to_thread(
+                                    crud.mark_remediation_rollback_failed,
+                                    remediation_id=item["id"],
+                                    task_id=item["task_id"],
+                                    domain=item["domain"],
+                                    verify_time=res.get("verify_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                                    verify_detail=f"【防回滚复测告警】已修复记录重新检测到风险域名！{res.get('verify_detail', '')}",
+                                    context_snippet=res.get("context_snippet")
+                                )
+                            except Exception as ex:
+                                logger.error(f"Failed to sync rollback status for item {item['id']}: {ex}")
+
+                        async with progress_lock:
+                            self.current_progress["current"] += 1
+                            if st == "verified_clean":
+                                self.current_progress["cleaned_count"] += 1
+                            elif st == "page_removed":
+                                self.current_progress["removed_count"] += 1
+                            elif st == "verified_failed":
+                                self.current_progress["failed_count"] += 1
+                            else:
+                                self.current_progress["error_count"] += 1
+
+                            cur = self.current_progress["current"]
+                            tot = self.current_progress["total"]
+                            self.current_progress["percentage"] = round((cur / tot) * 100, 1) if tot > 0 else 100.0
+                            repaired = self.current_progress["cleaned_count"] + self.current_progress["removed_count"]
+                            self.current_progress["cleaned_ratio"] = round((repaired / cur) * 100, 1) if cur > 0 else 0.0
+                            self.current_progress["failed_ratio"] = round((self.current_progress["failed_count"] / cur) * 100, 1) if cur > 0 else 0.0
+                        return res
+
+                tasks = [asyncio.create_task(sem_worker(item)) for item in remediated_items]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            cleaned = sum(1 for r in results if isinstance(r, dict) and r.get("verify_status") == "verified_clean")
+            failed = sum(1 for r in results if isinstance(r, dict) and r.get("verify_status") == "verified_failed")
+            removed = sum(1 for r in results if isinstance(r, dict) and r.get("verify_status") == "page_removed")
+            errors = sum(1 for r in results if not isinstance(r, dict) or r.get("verify_status") == "error")
+
+            duration = round((datetime.now() - t0).total_seconds(), 2)
+            finish_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.rollback_audit["last_audit_time"] = finish_str
+            self.rollback_audit["next_audit_time"] = self._calculate_next_rollback_time(datetime.now())
+            self.rollback_audit["last_stats"] = {
+                "total_tested": len(remediated_items),
+                "clean_preserved": cleaned,
+                "rollback_detected": failed,
+                "page_removed": removed,
+                "error_count": errors,
+                "duration_seconds": duration,
+                "finished_at": finish_str
+            }
+            logger.info(f"Rollback audit cycle finished: tested={len(remediated_items)}, preserved={cleaned}, rollback_failed={failed}, removed={removed} in {duration}s")
+        finally:
+            self.rollback_audit["is_auditing"] = False
+            self.is_checking = False
+            self.current_progress["is_checking"] = False
+

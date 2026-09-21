@@ -121,12 +121,22 @@ def get_timer_status():
 
 
 @router.post("/trigger-verify")
-def trigger_periodic_verify():
+async def trigger_periodic_verify():
     """
     Manually trigger an immediate batch verification cycle of all pending risk pages.
     """
     verifier = PeriodicRiskVerifier.get_instance()
     res = verifier.trigger_now()
+    return res
+
+
+@router.post("/trigger-rollback-audit")
+async def trigger_rollback_audit():
+    """
+    Manually trigger an immediate rollback re-audit cycle of remediated risk pages.
+    """
+    verifier = PeriodicRiskVerifier.get_instance()
+    res = verifier.trigger_rollback_now()
     return res
 
 

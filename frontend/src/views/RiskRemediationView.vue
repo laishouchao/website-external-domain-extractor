@@ -8,14 +8,14 @@
           风险页面整改处置工作台
         </h1>
         <p class="text-xs text-slate-400 mt-1">
-          实时汇聚所有扫描任务中未修复的涉险页面链接，系统后台每 10 分钟自动轮询复测，支持针对性整改指引与工单流转
+          实时汇聚所有扫描任务中未修复的涉险页面链接，系统后台每 1 小时自动轮询复测，修复后自动移出；每 2 天 15:00 自动进行防回滚复测，支持针对性整改指引与工单流转
         </p>
       </div>
 
       <div class="flex items-center gap-2">
         <button
           @click="openExportModal"
-          class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors shadow-sm"
+          class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
         >
           <Download class="w-4 h-4 text-emerald-400" />
           导出整改清单 (CSV)
@@ -23,7 +23,7 @@
         <button
           @click="store.syncOccurrences"
           :disabled="store.isSyncing"
-          class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors"
+          class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
           title="从扫描历史提取新存证到整改台"
         >
           <FolderSync class="w-4 h-4 text-indigo-400" :class="{ 'animate-spin': store.isSyncing }" />
@@ -31,7 +31,7 @@
         </button>
         <button
           @click="refreshAll"
-          class="p-2 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 rounded-xl transition-colors"
+          class="p-2 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 rounded-xl transition-colors cursor-pointer"
           title="刷新数据"
         >
           <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': store.loading }" />
@@ -39,37 +39,128 @@
       </div>
     </div>
 
-    <!-- 10-Min Timer Automation Status Bar -->
-    <div class="bg-gradient-to-r from-slate-900 via-indigo-950/30 to-slate-900 border border-indigo-500/20 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-      <div class="flex items-center gap-4">
-        <div class="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-          <Clock class="w-5 h-5" />
+    <!-- 1-Hour Timer Automation Status Bar with Real-time Progress & Rollback Info -->
+    <div class="bg-gradient-to-r from-slate-900 via-indigo-950/30 to-slate-900 border border-indigo-500/20 rounded-xl p-4 space-y-3.5 shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3.5">
+          <div class="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 shrink-0">
+            <Clock class="w-5 h-5" />
+          </div>
+          <div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-sm font-semibold text-slate-200">1 小时自动闭环轮询复测</span>
+              <span
+                v-if="store.timer.is_checking"
+                class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1"
+              >
+                <RefreshCw class="w-3 h-3 animate-spin text-amber-400" />
+                {{ store.timer.current_progress?.check_type === 'rollback' ? '防回滚复测执行中...' : '自动复测执行中...' }}
+              </span>
+              <span
+                v-else
+                class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1"
+              >
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                巡检引擎运行中
+              </span>
+            </div>
+            <div class="text-xs text-slate-400 mt-0.5 flex items-center gap-3 flex-wrap">
+              <span v-if="store.timer.is_checking" class="text-amber-300 font-medium">
+                本次复测进行中，结束后 1 小时启动下次自动复测
+              </span>
+              <span v-else>
+                下次复测倒计时:
+                <span class="font-mono font-bold text-indigo-400">{{ formatCountdown(store.timer.remaining_seconds) }}</span>
+              </span>
+              <span class="text-slate-500">|</span>
+              <span>上次复测: {{ store.timer.last_run_time || '刚刚' }}</span>
+              <span class="text-slate-500">|</span>
+              <span class="text-slate-400" :title="`上次检测: ${store.timer.rollback_audit?.last_audit_time || '尚未运行'}`">
+                防回滚再测试计划: <strong class="text-purple-300 font-normal">每2天 15:00</strong>
+                <span class="text-slate-500 ml-1">(下次: {{ store.timer.rollback_audit?.next_audit_time ? store.timer.rollback_audit.next_audit_time.split(' ')[0] + ' 15:00' : '已排期' }})</span>
+              </span>
+            </div>
+          </div>
         </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-semibold text-slate-200">10 分钟自动闭环轮询复测</span>
-            <span class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              巡检引擎运行中
-            </span>
-          </div>
-          <div class="text-xs text-slate-400 mt-0.5">
-            下次自动复测倒计时:
-            <span class="font-mono font-bold text-indigo-400">{{ formatCountdown(store.timer.remaining_seconds) }}</span>
-            <span class="text-slate-500 ml-2">| 上次复测: {{ store.timer.last_run_time || '刚刚' }}</span>
-          </div>
+
+        <div class="flex items-center gap-2 shrink-0">
+          <button
+            @click="store.triggerBatchVerify"
+            :disabled="store.isTriggeringBatch || store.timer.is_checking"
+            class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+            title="立即对所有待复测及残留记录重新发起 HTTP 请求校验"
+          >
+            <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': store.isTriggeringBatch || (store.timer.is_checking && store.timer.current_progress?.check_type === 'regular') }" />
+            立即轮询待复测
+          </button>
+          <button
+            @click="store.triggerRollbackAudit"
+            :disabled="store.isTriggeringRollback || store.timer.is_checking"
+            class="px-3.5 py-2 bg-purple-700/80 hover:bg-purple-600 border border-purple-500/30 disabled:opacity-50 text-purple-100 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+            title="对所有标记为已修复/已清除的记录做再测试，检测是否被回滚"
+          >
+            <ShieldAlert class="w-3.5 h-3.5" :class="{ 'animate-pulse': store.timer.is_checking && store.timer.current_progress?.check_type === 'rollback' }" />
+            触发防回滚再测试
+          </button>
         </div>
       </div>
 
-      <div class="flex items-center gap-2">
-        <button
-          @click="store.triggerBatchVerify"
-          :disabled="store.isTriggeringBatch"
-          class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors shadow-sm"
-        >
-          <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': store.isTriggeringBatch }" />
-          立即触发全量轮询校验
-        </button>
+      <!-- Live Progress Bar & Proportions (During Active Checking) -->
+      <div v-if="store.timer.is_checking && store.timer.current_progress" class="bg-slate-950/80 border border-slate-800 rounded-lg p-3 space-y-2">
+        <div class="flex items-center justify-between text-xs flex-wrap gap-2">
+          <div class="flex items-center gap-2">
+            <span class="font-semibold text-slate-200">
+              {{ store.timer.current_progress.check_type === 'rollback' ? '【防回滚复测】正在复核已修复记录' : '【常规复测】正在轮询涉险页面' }}
+            </span>
+            <span class="font-mono text-indigo-400 font-bold">
+              {{ store.timer.current_progress.current || 0 }} / {{ store.timer.current_progress.total || 0 }}
+            </span>
+            <span class="text-slate-500 text-[11px]">({{ store.timer.current_progress.percentage || 0 }}%)</span>
+          </div>
+
+          <!-- Proportion breakdown -->
+          <div class="flex items-center gap-4 text-xs font-medium">
+            <div class="flex items-center gap-1.5 text-emerald-400">
+              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+              <span>已修复清除: <strong>{{ (store.timer.current_progress.cleaned_count || 0) + (store.timer.current_progress.removed_count || 0) }}</strong></span>
+              <span class="text-[11px] font-mono opacity-80">({{ store.timer.current_progress.cleaned_ratio || 0 }}%)</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-rose-400">
+              <span class="w-2 h-2 rounded-full bg-rose-400"></span>
+              <span>未修复仍存留: <strong>{{ store.timer.current_progress.failed_count || 0 }}</strong></span>
+              <span class="text-[11px] font-mono opacity-80">({{ store.timer.current_progress.failed_ratio || 0 }}%)</span>
+            </div>
+            <div v-if="store.timer.current_progress.error_count" class="flex items-center gap-1 text-slate-400 text-[11px]">
+              <span>超时/异常: {{ store.timer.current_progress.error_count }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Visual Progress Bar with dual-proportion fill -->
+        <div class="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden flex border border-slate-800">
+          <div
+            class="bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
+            :style="{ width: `${(store.timer.current_progress.cleaned_ratio || 0) * ((store.timer.current_progress.percentage || 0) / 100)}%` }"
+            title="已修复清除比例"
+          ></div>
+          <div
+            class="bg-gradient-to-r from-rose-500 to-red-500 transition-all duration-300"
+            :style="{ width: `${(store.timer.current_progress.failed_ratio || 0) * ((store.timer.current_progress.percentage || 0) / 100)}%` }"
+            title="未修复仍存留比例"
+          ></div>
+        </div>
+      </div>
+
+      <!-- Compact Summary of Last Run (When Idle) -->
+      <div v-else-if="store.timer.last_run_stats && store.timer.last_run_stats.total_tested > 0" class="bg-slate-950/40 border border-slate-800/80 rounded-lg px-3 py-2 text-xs text-slate-400 flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-3">
+          <span>最近一次完成复测: <strong class="text-slate-200">{{ store.timer.last_run_stats.total_tested }}</strong> 个页面</span>
+          <span class="text-emerald-400">已修复: {{ (store.timer.last_run_stats.cleaned_count || 0) + (store.timer.last_run_stats.removed_count || 0) }} 处 ({{ Math.round((((store.timer.last_run_stats.cleaned_count || 0) + (store.timer.last_run_stats.removed_count || 0)) / store.timer.last_run_stats.total_tested) * 100) }}%)</span>
+          <span class="text-rose-400">仍残留未修复: {{ store.timer.last_run_stats.failed_count || 0 }} 处 ({{ Math.round(((store.timer.last_run_stats.failed_count || 0) / store.timer.last_run_stats.total_tested) * 100) }}%)</span>
+        </div>
+        <div class="text-[11px] text-slate-500">
+          复测耗时: {{ store.timer.last_run_stats.duration_seconds }}s | 完成于: {{ store.timer.last_run_stats.finished_at || store.timer.last_run_time }}
+        </div>
       </div>
     </div>
 
@@ -548,10 +639,11 @@ const toggleSelectAll = (e) => {
 }
 
 const formatCountdown = (seconds) => {
-  if (!seconds || seconds <= 0) return '00:00'
-  const m = Math.floor(seconds / 60)
+  if (!seconds || seconds <= 0) return '00:00:00'
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
   const s = seconds % 60
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
 const handleSearch = () => {
@@ -616,14 +708,27 @@ const executeExport = () => {
 
 onMounted(() => {
   refreshAll()
-  // Local decrement countdown timer
-  timerInterval = setInterval(() => {
-    if (store.timer.remaining_seconds > 0) {
-      store.timer.remaining_seconds--
+  // Local decrement countdown timer & dynamic polling during verification
+  let checkingPollCounter = 0
+  timerInterval = setInterval(async () => {
+    if (store.timer.is_checking) {
+      checkingPollCounter++
+      // poll status every 1.5-2 seconds while checking
+      if (checkingPollCounter % 2 === 0) {
+        await store.loadTimerStatus()
+        if (!store.timer.is_checking) {
+          // Finished cycle!
+          await Promise.all([store.loadPages(store.page), store.loadStats()])
+        }
+      }
     } else {
-      store.loadTimerStatus()
-      store.loadPages(store.page)
-      store.loadStats()
+      checkingPollCounter = 0
+      if (store.timer.remaining_seconds > 0) {
+        store.timer.remaining_seconds--
+      } else {
+        await store.loadTimerStatus()
+        await Promise.all([store.loadPages(store.page), store.loadStats()])
+      }
     }
   }, 1000)
 })

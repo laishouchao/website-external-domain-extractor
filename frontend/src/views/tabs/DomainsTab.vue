@@ -295,87 +295,12 @@
       </div>
     </Drawer>
 
-    <!-- Risk Assess Modal -->
-    <Modal
-      :model-value="riskModalOpen"
-      title="研判外部域名风险"
-      @update:model-value="riskModalOpen = $event"
-    >
-      <form @submit.prevent="submitRiskUpdate" class="space-y-4">
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">目标域名</label>
-          <input
-            type="text"
-            :value="editingDomain?.domain"
-            disabled
-            class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-sm text-slate-400 font-mono"
-          />
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">风险等级</label>
-          <select
-            v-model="riskForm.risk_level"
-            class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-          >
-            <option value="critical">严重风险 (Critical)</option>
-            <option value="high">高危风险 (High)</option>
-            <option value="medium">中危风险 (Medium)</option>
-            <option value="low">低危风险 (Low)</option>
-            <option value="safe">安全可信 (Safe)</option>
-            <option value="pending">待研判 (Pending)</option>
-          </select>
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">安全标签 (逗号分隔)</label>
-          <input
-            v-model="riskForm.tagsInput"
-            type="text"
-            placeholder="例如: 赌博黑产, 恶意跳转, 废弃外链"
-            class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-          />
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">研判说明与处置备注</label>
-          <textarea
-            v-model="riskForm.remark"
-            rows="3"
-            placeholder="记录分析研判思路及修复要求..."
-            class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-          ></textarea>
-        </div>
-
-        <div class="flex items-center gap-2 pt-2 border-t border-slate-800">
-          <input
-            id="syncGlobal"
-            v-model="riskForm.sync_to_global"
-            type="checkbox"
-            class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer"
-          />
-          <label for="syncGlobal" class="text-xs text-slate-300 cursor-pointer select-none">
-            同步添加为全局威胁情报规则（后续所有扫描自动标记）
-          </label>
-        </div>
-
-        <div class="flex justify-end gap-2 pt-4 border-t border-slate-800">
-          <button
-            type="button"
-            @click="riskModalOpen = false"
-            class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm"
-          >
-            取消
-          </button>
-          <button
-            type="submit"
-            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium"
-          >
-            保存研判结果
-          </button>
-        </div>
-      </form>
-    </Modal>
+    <!-- Risk Assess Modal (统一标准研判弹窗) -->
+    <RiskAssessModal
+      v-model="riskModalOpen"
+      :item="editingDomain"
+      @saved="handleAssessSaved"
+    />
 
     <!-- Batch Risk Modal -->
     <Modal
@@ -442,6 +367,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import Drawer from '@/components/common/Drawer.vue'
 import Modal from '@/components/common/Modal.vue'
 import CodeSnippet from '@/components/common/CodeSnippet.vue'
+import RiskAssessModal from '@/components/common/RiskAssessModal.vue'
 
 const props = defineProps({
   taskId: {
@@ -488,12 +414,6 @@ const loadingOccurrences = ref(false)
 // Risk Modal state
 const riskModalOpen = ref(false)
 const editingDomain = ref(null)
-const riskForm = ref({
-  risk_level: 'high',
-  tagsInput: '',
-  remark: '',
-  sync_to_global: false
-})
 
 // Batch Risk Modal state
 const batchModalOpen = ref(false)
@@ -564,36 +484,17 @@ const viewOccurrences = async (domain) => {
 
 const openRiskModal = (item) => {
   editingDomain.value = item
-  riskForm.value = {
-    risk_level: item.risk_level || 'pending',
-    tagsInput: (item.tags || []).join(', '),
-    remark: item.remark || '',
-    sync_to_global: false
-  }
   riskModalOpen.value = true
 }
 
-const submitRiskUpdate = async () => {
-  try {
-    const tags = riskForm.value.tagsInput
-      .split(/[,，]/)
-      .map(t => t.trim())
-      .filter(Boolean)
-
-    await client.post(`/tasks/${props.taskId}/domains/${encodeURIComponent(editingDomain.value.domain)}/risk`, {
-      risk_level: riskForm.value.risk_level,
-      tags,
-      remark: riskForm.value.remark,
-      sync_to_global: riskForm.value.sync_to_global
-    })
-
-    ui.showToast('风险评级已更新', 'success')
-    riskModalOpen.value = false
-    loadDomains(page.value)
-    emit('updated')
-  } catch (e) {
-    ui.showToast('更新失败: ' + e.message, 'error')
+const handleAssessSaved = async (payload) => {
+  if (editingDomain.value) {
+    editingDomain.value.risk_level = payload.risk_level
+    editingDomain.value.risk_tags = payload.tags
+    editingDomain.value.risk_remark = payload.remark
   }
+  await loadDomains(page.value)
+  emit('updated')
 }
 
 const openBatchRiskModal = () => {
