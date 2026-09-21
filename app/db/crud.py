@@ -1692,10 +1692,15 @@ def update_external_domain_verify_result(
         status = verify_status.get("verify_status", "verified_clean")
         vtime = verify_status.get("verify_time") or now_iso()
         detail = json.dumps(verify_status, ensure_ascii=False)
+        verdict_dict = verify_status
     else:
         status = str(verify_status or "unverified")
         vtime = verify_time or now_iso()
         detail = verify_detail if isinstance(verify_detail, str) else json.dumps(verify_detail or {}, ensure_ascii=False)
+        try:
+            verdict_dict = json.loads(detail) if isinstance(detail, str) else {}
+        except Exception:
+            verdict_dict = {}
 
     with db_session() as conn:
         cursor = conn.cursor()
@@ -1704,12 +1709,34 @@ def update_external_domain_verify_result(
             SET verify_status = ?, verify_time = ?, verify_detail = ?
             WHERE task_id = ? AND domain = ?
         """, (status, vtime, detail, task_id, domain))
-        cursor.execute("""
-            UPDATE risk_page_remediations
-            SET verify_status = ?, verify_time = ?, verify_detail = ?
-            WHERE task_id = ? AND domain = ?
-        """, (status, vtime, detail, task_id, domain))
-        return cursor.rowcount > 0
+
+        # Synchronize to risk_page_remediations using its exact schema:
+        # columns: verify_status, last_verified_at, last_verify_detail, updated_at
+        if status == "verified_clean":
+            cursor.execute("""
+                UPDATE risk_page_remediations
+                SET verify_status = 'verified_clean', last_verified_at = ?, last_verify_detail = ?, updated_at = ?
+                WHERE task_id = ? AND domain = ?
+            """, (vtime, detail, now_iso(), task_id, domain))
+        elif isinstance(verdict_dict, dict) and "details" in verdict_dict and verdict_dict["details"]:
+            for item in verdict_dict["details"]:
+                p_url = item.get("url")
+                p_found = item.get("found")
+                if p_url:
+                    p_status = "verified_clean" if p_found is False else ("verified_failed" if p_found is True else "error")
+                    p_detail = json.dumps(item, ensure_ascii=False)
+                    cursor.execute("""
+                        UPDATE risk_page_remediations
+                        SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?, updated_at = ?
+                        WHERE task_id = ? AND domain = ? AND page_url = ?
+                    """, (p_status, vtime, p_detail, now_iso(), task_id, domain, p_url))
+        else:
+            cursor.execute("""
+                UPDATE risk_page_remediations
+                SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?, updated_at = ?
+                WHERE task_id = ? AND domain = ?
+            """, (status, vtime, detail, now_iso(), task_id, domain))
+        return True
 
 
 def evaluate_task_domains_rules(task_id: int) -> dict:

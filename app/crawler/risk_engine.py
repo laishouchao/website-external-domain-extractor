@@ -243,13 +243,14 @@ async def verify_domain_remediation(domain: str, occurrence_urls: List[str], max
         "Accept": "*/*"
     }
 
-    sem = asyncio.Semaphore(15)
+    sem = asyncio.Semaphore(30)
 
     async def sem_verify(client, url):
         async with sem:
             return await verify_page_for_domain(client, url, domain)
 
-    async with httpx.AsyncClient(headers=headers, verify=False, follow_redirects=True, timeout=12.0) as client:
+    limits = httpx.Limits(max_keepalive_connections=50, max_connections=100)
+    async with httpx.AsyncClient(headers=headers, limits=limits, verify=False, follow_redirects=True, timeout=10.0) as client:
         tasks = [sem_verify(client, url) for url in unique_urls]
         results = await asyncio.gather(*tasks, return_exceptions=False)
 
@@ -277,5 +278,5 @@ async def verify_domain_remediation(domain: str, occurrence_urls: List[str], max
         "remaining_pages": still_present_count,
         "cleared_count": cleared_count,
         "error_count": error_count,
-        "details": results
+        "details": results[:200] if len(results) > 200 else results
     }

@@ -427,32 +427,32 @@
 
             <!-- Task Verification Progress & Summary Details -->
             <div
-              v-if="t.verify_status || t.verify_progress || taskVerifying[t.task_id]"
+              v-if="t.verify_status || t.verify_progress || taskVerifying[t.task_id] || verifying === currentDomain"
               class="bg-slate-900/80 border border-slate-800/90 rounded-lg p-3 space-y-2 text-xs"
             >
               <div class="flex items-center justify-between gap-2 flex-wrap">
                 <div class="flex items-center gap-2">
                   <span class="text-slate-400 font-medium">任务复测进度:</span>
-                  <span v-if="t.total_pages > 0" class="font-mono text-xs font-bold"
+                  <span v-if="taskVerifying[t.task_id] || verifying === currentDomain" class="text-indigo-400 font-mono flex items-center gap-1.5 font-bold">
+                    <Loader2 class="w-3.5 h-3.5 animate-spin" />
+                    正在全量并发拉取并复测全部关联页面 (共 {{ t.occurrence_count }} 条记录)...
+                  </span>
+                  <span v-else-if="t.total_pages > 0" class="font-mono text-xs font-bold"
                     :class="t.verify_status === 'verified_clean' ? 'text-emerald-400' : 'text-amber-400'"
                   >
                     已清除 {{ t.cleared_count || 0 }} / 仍存留 {{ t.still_present_count || 0 }} (共 {{ t.total_pages }} 个页面)
-                  </span>
-                  <span v-else-if="taskVerifying[t.task_id]" class="text-indigo-400 font-mono flex items-center gap-1">
-                    <Loader2 class="w-3 h-3 animate-spin" />
-                    正在并发拉取并复测全部关联页面...
                   </span>
                   <span v-else-if="t.verify_progress" class="font-mono text-slate-300">
                     {{ t.verify_progress }}
                   </span>
                 </div>
-                <span v-if="t.verify_time" class="text-slate-500 font-mono text-[11px]">
+                <span v-if="t.verify_time && !taskVerifying[t.task_id] && verifying !== currentDomain" class="text-slate-500 font-mono text-[11px]">
                   复测时间: {{ t.verify_time }}
                 </span>
               </div>
 
               <!-- Progress Bar -->
-              <div v-if="t.total_pages > 0" class="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden flex">
+              <div v-if="!taskVerifying[t.task_id] && verifying !== currentDomain && t.total_pages > 0" class="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden flex">
                 <div
                   class="bg-emerald-500 h-full transition-all duration-500"
                   :style="{ width: `${Math.round(((t.cleared_count || 0) / t.total_pages) * 100)}%` }"
@@ -463,7 +463,7 @@
                 ></div>
               </div>
 
-              <div v-if="t.verify_summary" class="text-[11px] text-slate-400">
+              <div v-if="!taskVerifying[t.task_id] && verifying !== currentDomain && t.verify_summary" class="text-[11px] text-slate-400">
                 {{ t.verify_summary }}
               </div>
             </div>
