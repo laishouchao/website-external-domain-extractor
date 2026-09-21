@@ -35,16 +35,8 @@ def _bool_env(key: str, default: bool) -> bool:
 
 
 # ==============================================================================
-# Database Configuration
+# PostgreSQL Database Configuration
 # ==============================================================================
-# Database engine configuration ('postgresql' or 'sqlite')
-DB_TYPE = os.getenv("DB_TYPE", "postgresql").lower()
-
-# SQLite configuration
-_sqlite_path = os.getenv("SQLITE_DB_PATH")
-DB_PATH = Path(_sqlite_path) if _sqlite_path else (DATA_DIR / "crawler.db")
-
-# PostgreSQL configuration
 PG_HOST = os.getenv("PG_HOST", "127.0.0.1")
 PG_PORT = int(os.getenv("PG_PORT", 5432))
 PG_USER = os.getenv("PG_USER", "postgres")

@@ -1,9 +1,7 @@
 import json
-import sqlite3
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from app.db.database import db_session
-from app.config import DB_TYPE
 from app.crawler.risk_engine import evaluate_domain_risk
 
 def now_iso() -> str:
@@ -179,7 +177,7 @@ def save_crawl_result(task_id: int, page_data: dict, external_domains: List[dict
                       occurrences: List[dict], subdomains: Optional[List[dict]] = None) -> int:
     """
     Save page, upsert external domains, upsert subdomains, and insert domain occurrences in a SINGLE atomic database transaction.
-    Greatly reduces disk I/O and SQLite lock contention in concurrent crawling.
+    Greatly reduces database round trips and latency in concurrent crawling.
     """
     with db_session() as conn:
         cursor = conn.cursor()
@@ -387,7 +385,7 @@ def save_crawl_results_batch(
 ):
     """
     Persist a batch of crawled pages, consolidated external domains, subdomains,
-    and occurrences in a single atomic SQLite transaction.
+    and occurrences in a single atomic PostgreSQL transaction.
     Also updates task progress within the same transaction to avoid lock contention.
     """
     if not batch_items:
@@ -810,7 +808,6 @@ def get_domain_occurrences(task_id: int, domain: str, limit: int = 50) -> List[d
         cursor.execute("""
             SELECT * FROM domain_occurrences
             WHERE task_id = ? AND domain = ?
-            ORDER BY id ASC
             LIMIT ?
         """, (task_id, domain, limit))
         return [dict(r) for r in cursor.fetchall()]
@@ -1202,10 +1199,7 @@ def list_global_external_domains(
         col = valid_cols.get(sort_by, 'total_occurrences')
         direction = 'ASC' if order.upper() == 'ASC' else 'DESC'
 
-        if DB_TYPE == "postgresql":
-            tasks_agg = "STRING_AGG(CONCAT(t.id, ':::', t.name, ':::', ed.occurrence_count), ';;;')"
-        else:
-            tasks_agg = "GROUP_CONCAT(t.id || ':::' || t.name || ':::' || ed.occurrence_count, ';;;')"
+        tasks_agg = "STRING_AGG(CONCAT(t.id, ':::', t.name, ':::', ed.occurrence_count), ';;;')"
 
         # Main query
         main_sql = f"""
@@ -1432,7 +1426,6 @@ def get_domain_associated_tasks(domain: str, max_occurrences_per_task: Optional[
                     SELECT page_url, source_type, raw_match, context_snippet, created_at
                     FROM domain_occurrences
                     WHERE task_id = ? AND domain = ?
-                    ORDER BY id ASC
                     LIMIT ?
                 """, (t["task_id"], domain, max_occurrences_per_task))
             else:
@@ -1440,7 +1433,6 @@ def get_domain_associated_tasks(domain: str, max_occurrences_per_task: Optional[
                     SELECT page_url, source_type, raw_match, context_snippet, created_at
                     FROM domain_occurrences
                     WHERE task_id = ? AND domain = ?
-                    ORDER BY id ASC
                 """, (t["task_id"], domain))
             t["occurrences"] = [dict(r) for r in cursor.fetchall()]
 

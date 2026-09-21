@@ -23,7 +23,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 from app.config import (
-    DB_PATH, PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE
+    DATA_DIR, PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE
 )
 from app.db.database import init_db_postgresql
 
@@ -168,7 +168,7 @@ def migrate_table(sqlite_conn, pg_conn, table: str, batch_size: int = 5000):
 
 def main():
     parser = argparse.ArgumentParser(description="Migrate Website External Domain System database from SQLite to PostgreSQL 14")
-    parser.add_argument("--sqlite-path", type=str, default=str(DB_PATH), help="Path to source SQLite .db file")
+    parser.add_argument("--sqlite-path", type=str, default=str(DATA_DIR / "crawler.db"), help="Path to source SQLite .db file")
     parser.add_argument("--batch-size", type=int, default=5000, help="Batch size for streaming inserts (default: 5000)")
     parser.add_argument("--verify-only", action="store_true", help="Only verify row counts without migrating")
     parser.add_argument("--table", type=str, default=None, help="Migrate a specific table only")

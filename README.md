@@ -109,7 +109,7 @@ e:\SOLO\网站外部域名提取系统\
 │   ├── main.py                # FastAPI 应用主入口、静态托管与路由组装
 │   ├── db/
 │   │   ├── __init__.py
-│   │   ├── database.py        # SQLite 连接池、WAL 模式与表结构初始化
+│   │   ├── database.py        # PostgreSQL 原生连接池、GIN 倒排索引与表结构初始化
 │   │   └── crud.py            # 任务、页面、外部域名、日志 CRUD 操作
 │   ├── crawler/
 │   │   ├── __init__.py
@@ -128,8 +128,7 @@ e:\SOLO\网站外部域名提取系统\
 │       ├── style.css          # 自定义视觉样式、终端窗体与动画
 │       └── vendor/
 │           └── vue.global.prod.js # 本地缓存的 Vue 3 生产版本
-├── data/
-│   └── crawler.db             # SQLite 数据库持久化文件
+├── .env.example               # 环境与数据库配置模板
 ├── run.py                     # 启动入口脚本
 ├── start.bat                  # Windows 快捷批处理启动脚本
 ├── requirements.txt           # 项目 Python 依赖库
