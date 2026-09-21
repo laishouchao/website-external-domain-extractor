@@ -318,15 +318,35 @@ def migrate_table(sqlite_conn, pg_conn, table: str, batch_size: int = 10000, tru
     placeholders = ", ".join(["%s"] * len(cols))
     row_placeholder = f"({placeholders})"
 
+    # 检查是否支持秒级断点续传（如果目标表已有部分数据且存在主键 id）
+    start_id = 0
+    already_migrated = 0
+    if not truncate_target and "id" in cols:
+        try:
+            p_cur.execute(f"SELECT COALESCE(MAX(id), 0), COUNT(*) FROM {table}")
+            pg_max_id, pg_count = p_cur.fetchone()
+            if pg_max_id > 0 and pg_count > 0:
+                s_cur.execute(f"SELECT COUNT(*) FROM (SELECT id FROM {table} WHERE id > ? LIMIT 1)", (pg_max_id,))
+                if s_cur.fetchone()[0] > 0:
+                    start_id = pg_max_id
+                    already_migrated = pg_count
+                    print(f"\n[INFO] 表 '{table}' 检测到历史入库进度，启用秒级断点接力续传:")
+                    print(f"       -> 跳过已迁移的 {already_migrated:,} 行，直接从 id > {start_id:,} 接续导入！")
+        except Exception:
+            pass
+
     # 毫秒级快速探测数据规模（免去全表扫描）
     approx_total = get_approx_row_count(s_cur, table)
     if approx_total:
-        print(f"\n>> 开始流式迁移表 '{table}' (预估规模约 {approx_total:,} 行)...")
+        print(f">> 开始流式迁移表 '{table}' (预估规模约 {approx_total:,} 行)...")
     else:
-        print(f"\n>> 开始流式迁移表 '{table}'...")
+        print(f">> 开始流式迁移表 '{table}'...")
 
     t0 = time.time()
-    s_cur.execute(f"SELECT {cols_str} FROM {table}")
+    if start_id > 0:
+        s_cur.execute(f"SELECT {cols_str} FROM {table} WHERE id > ? ORDER BY id ASC", (start_id,))
+    else:
+        s_cur.execute(f"SELECT {cols_str} FROM {table}")
 
     migrated = 0
 
@@ -381,24 +401,28 @@ def migrate_table(sqlite_conn, pg_conn, table: str, batch_size: int = 10000, tru
         elapsed = time.time() - t0
         speed = int(migrated / elapsed) if elapsed > 0 else 0
 
+        total_done = already_migrated + migrated
         if approx_total and approx_total > 0:
-            pct = min(100.0, (migrated / approx_total) * 100)
-            eta_sec = (approx_total - migrated) / speed if speed > 0 and approx_total > migrated else 0
+            pct = min(100.0, (total_done / approx_total) * 100)
+            eta_sec = (approx_total - total_done) / speed if speed > 0 and approx_total > total_done else 0
             eta_str = format_eta(eta_sec)
             sys.stdout.write(
-                f"\r  进度: {migrated:,}/{approx_total:,} ({pct:5.1f}%) | "
+                f"\r  进度: {total_done:,}/{approx_total:,} ({pct:5.1f}%) | "
                 f"速率: {speed:6,d} 行/秒 | 耗时: {int(elapsed)}s | 剩余: {eta_str}   "
             )
         else:
             sys.stdout.write(
-                f"\r  进度: 已迁移 {migrated:,} 行 | "
+                f"\r  进度: 已迁移 {total_done:,} 行 | "
                 f"速率: {speed:6,d} 行/秒 | 耗时: {int(elapsed)}s   "
             )
         sys.stdout.flush()
 
     total_time = time.time() - t0
     avg_speed = int(migrated / total_time) if total_time > 0 else 0
-    print(f"\n  [OK] 表 '{table}' 迁移完成: 共 {migrated:,} 行，耗时 {total_time:.2f} 秒 (平均 {avg_speed:,} 行/秒)。")
+    if already_migrated > 0:
+        print(f"\n  [OK] 表 '{table}' 迁移完成: 本次接力新增 {migrated:,} 行 (累计 {already_migrated + migrated:,} 行)，耗时 {total_time:.2f} 秒 (平均 {avg_speed:,} 行/秒)。")
+    else:
+        print(f"\n  [OK] 表 '{table}' 迁移完成: 共 {migrated:,} 行，耗时 {total_time:.2f} 秒 (平均 {avg_speed:,} 行/秒)。")
 
     # 立即同步主键自增序列
     sync_single_sequence(pg_conn, table)
