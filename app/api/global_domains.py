@@ -166,9 +166,12 @@ async def verify_global_domain_api(domain: str):
     from app.crawler.risk_engine import verify_domain_remediation
 
     results = []
+    has_failed = False
+    all_clean = True
+
     for t in tasks:
         tid = t["task_id"]
-        urls = [occ["page_url"] for occ in t.get("occurrences", []) if occ.get("page_url")]
+        urls = crud.get_domain_occurrence_urls(tid, domain, limit=None)
         if not urls and t.get("sample_page_url"):
             urls = [t["sample_page_url"]]
 
@@ -183,6 +186,13 @@ async def verify_global_domain_api(domain: str):
         total = verdict.get("total_pages", len(urls))
         cleared = verdict.get("cleared_count", 0)
         still_present = verdict.get("still_present_count", 0)
+
+        if verdict["verify_status"] == "verified_failed":
+            has_failed = True
+            all_clean = False
+        elif verdict["verify_status"] != "verified_clean":
+            all_clean = False
+
         results.append({
             "task_id": tid,
             "task_name": t.get("task_name", f"任务 #{tid}"),
@@ -191,14 +201,59 @@ async def verify_global_domain_api(domain: str):
             "still_present_count": still_present,
             "progress_text": f"{cleared}/{total}",
             "verify_status": verdict["verify_status"],
-            "verify_time": verdict["verify_time"]
+            "verify_time": verdict["verify_time"],
+            "summary": verdict.get("summary", "")
         })
+
+    overall_status = "verified_failed" if has_failed else ("verified_clean" if all_clean else "unverified")
 
     return {
         "success": True,
         "domain": domain,
         "task_count": len(results),
+        "overall_status": overall_status,
         "tasks": results
+    }
+
+
+@router.post("/{domain}/tasks/{task_id}/verify")
+async def verify_domain_in_specific_task_api(domain: str, task_id: int):
+    """
+    Verify remediation for all occurrences of this domain in a specific task.
+    """
+    task = crud.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    from app.crawler.risk_engine import verify_domain_remediation
+
+    urls = crud.get_domain_occurrence_urls(task_id, domain, limit=None)
+    verdict = await verify_domain_remediation(domain, urls)
+
+    crud.update_external_domain_verify_result(
+        task_id=task_id,
+        domain=domain,
+        verify_status=verdict["verify_status"],
+        verify_time=verdict["verify_time"],
+        verify_detail=json.dumps(verdict, ensure_ascii=False)
+    )
+
+    total = verdict.get("total_pages", len(urls))
+    cleared = verdict.get("cleared_count", 0)
+    still_present = verdict.get("still_present_count", 0)
+
+    return {
+        "success": True,
+        "domain": domain,
+        "task_id": task_id,
+        "total_pages": total,
+        "cleared_count": cleared,
+        "still_present_count": still_present,
+        "progress_text": f"{cleared}/{total}",
+        "verify_status": verdict["verify_status"],
+        "verify_time": verdict["verify_time"],
+        "summary": verdict.get("summary", ""),
+        "verdict": verdict
     }
 
 

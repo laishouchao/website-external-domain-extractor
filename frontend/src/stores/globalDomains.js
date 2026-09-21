@@ -84,12 +84,59 @@ export const useGlobalDomainsStore = defineStore('globalDomains', () => {
   const verifyDomainAcrossTasks = async (domain) => {
     try {
       const res = await client.post(`/global-domains/${encodeURIComponent(domain)}/verify`)
-      ui.showToast(`全库复测完成！已复测 ${res.task_count || 0} 个关联任务`, 'success')
+      const isClean = res.overall_status === 'verified_clean'
+      ui.showToast(
+        `全库复测完成！已全量复测 ${res.task_count || 0} 个任务中的所有页面，状态: ${isClean ? '全部已清除修复' : '仍存在存留代码'}`,
+        isClean ? 'success' : 'warning'
+      )
+      // Sync local task states in associatedTasks if open
+      if (res.tasks && Array.isArray(res.tasks)) {
+        for (const r of res.tasks) {
+          const found = associatedTasks.value.find(t => t.task_id === r.task_id)
+          if (found) {
+            found.verify_status = r.verify_status
+            found.verify_time = r.verify_time
+            found.verify_progress = r.progress_text
+            found.total_pages = r.total_pages
+            found.cleared_count = r.cleared_count
+            found.still_present_count = r.still_present_count
+            found.verify_summary = r.summary
+          }
+        }
+      }
       await loadDomains(page.value)
       await loadStats()
       return res
     } catch (e) {
       ui.showToast('全库复测失败: ' + e.message, 'error')
+      throw e
+    }
+  }
+
+  const verifyDomainInTask = async (domain, taskId) => {
+    try {
+      const res = await client.post(`/global-domains/${encodeURIComponent(domain)}/tasks/${taskId}/verify`)
+      const isClean = res.verify_status === 'verified_clean'
+      ui.showToast(
+        `任务 #${taskId} 复测完成: ${res.summary || res.verify_status}`,
+        isClean ? 'success' : 'warning'
+      )
+      // Sync this specific task state
+      const found = associatedTasks.value.find(t => t.task_id === taskId)
+      if (found) {
+        found.verify_status = res.verify_status
+        found.verify_time = res.verify_time
+        found.verify_progress = res.progress_text
+        found.total_pages = res.total_pages
+        found.cleared_count = res.cleared_count
+        found.still_present_count = res.still_present_count
+        found.verify_summary = res.summary
+      }
+      await loadDomains(page.value)
+      await loadStats()
+      return res
+    } catch (e) {
+      ui.showToast(`任务 #${taskId} 复测失败: ` + e.message, 'error')
       throw e
     }
   }
@@ -107,6 +154,7 @@ export const useGlobalDomainsStore = defineStore('globalDomains', () => {
     loadDomains,
     loadStats,
     loadAssociatedTasks,
-    verifyDomainAcrossTasks
+    verifyDomainAcrossTasks,
+    verifyDomainInTask
   }
 })

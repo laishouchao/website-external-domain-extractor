@@ -214,13 +214,14 @@ async def verify_page_for_domain(client: httpx.AsyncClient, url: str, domain: st
         }
 
 
-async def verify_domain_remediation(domain: str, occurrence_urls: List[str]) -> dict:
+async def verify_domain_remediation(domain: str, occurrence_urls: List[str], max_urls: Optional[int] = None) -> dict:
     """
     Perform targeted asynchronous re-checks on all pages where the domain was originally spotted.
     Returns audit details and remediation verdict.
     """
-    # Limit to at most 10 distinct URLs to avoid flooding
-    unique_urls = [u for u in dict.fromkeys(occurrence_urls) if u and u.strip()][:10]
+    unique_urls = [u for u in dict.fromkeys(occurrence_urls) if u and u.strip()]
+    if max_urls:
+        unique_urls = unique_urls[:max_urls]
     now_iso = datetime.now().isoformat()
 
     if not unique_urls:
@@ -242,8 +243,14 @@ async def verify_domain_remediation(domain: str, occurrence_urls: List[str]) -> 
         "Accept": "*/*"
     }
 
-    async with httpx.AsyncClient(headers=headers, verify=False, follow_redirects=True) as client:
-        tasks = [verify_page_for_domain(client, url, domain) for url in unique_urls]
+    sem = asyncio.Semaphore(15)
+
+    async def sem_verify(client, url):
+        async with sem:
+            return await verify_page_for_domain(client, url, domain)
+
+    async with httpx.AsyncClient(headers=headers, verify=False, follow_redirects=True, timeout=12.0) as client:
+        tasks = [sem_verify(client, url) for url in unique_urls]
         results = await asyncio.gather(*tasks, return_exceptions=False)
 
     still_present_count = sum(1 for r in results if r["found"] is True)
@@ -252,10 +259,10 @@ async def verify_domain_remediation(domain: str, occurrence_urls: List[str]) -> 
 
     if still_present_count > 0:
         status = "verified_failed"
-        summary = f"复测 {len(unique_urls)} 个历史页面，在 {still_present_count} 处仍检测到该外部域名代码，未完全清除！"
+        summary = f"复测全量 {len(unique_urls)} 个历史页面，在 {still_present_count} 处仍检测到该外部域名代码，未完全清除！"
     elif cleared_count > 0:
         status = "verified_clean"
-        summary = f"复测 {len(unique_urls)} 个历史页面，均已无该外部域名代码，确认修复已闭环！"
+        summary = f"复测全量 {len(unique_urls)} 个历史页面，均已无该外部域名代码，确认修复已闭环！"
     else:
         status = "error"
         summary = f"复测 {len(unique_urls)} 个页面均访问超时或连接异常，请检查网络或目标服务状态。"

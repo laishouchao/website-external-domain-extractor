@@ -1504,11 +1504,20 @@ def get_domain_associated_tasks(domain: str, max_occurrences_per_task: Optional[
 
             # Compute verify progress from verify_detail if available
             t["verify_progress"] = ""
+            t["total_pages"] = 0
+            t["cleared_count"] = 0
+            t["still_present_count"] = 0
+            t["verify_summary"] = ""
             if t.get("verify_detail"):
                 try:
                     vdetail = json.loads(t["verify_detail"]) if isinstance(t["verify_detail"], str) else t["verify_detail"]
                     total_pages = vdetail.get("total_pages", 0)
                     cleared_pages = vdetail.get("cleared_count", 0)
+                    still_present = vdetail.get("still_present_count", 0)
+                    t["total_pages"] = total_pages
+                    t["cleared_count"] = cleared_pages
+                    t["still_present_count"] = still_present
+                    t["verify_summary"] = vdetail.get("summary", "")
                     if total_pages > 0:
                         t["verify_progress"] = f"{cleared_pages}/{total_pages}"
                 except Exception:
@@ -1552,15 +1561,21 @@ def get_global_domains_for_export(
 
 # ==================== Domain Risk & Verification CRUD ====================
 
-def get_domain_occurrence_urls(task_id: int, domain: str, limit: int = 10) -> List[str]:
+def get_domain_occurrence_urls(task_id: int, domain: str, limit: Optional[int] = None) -> List[str]:
     """Get unique occurrence page URLs for targeted remediation re-testing."""
     with db_session() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT DISTINCT page_url FROM domain_occurrences
-            WHERE task_id = ? AND domain = ?
-            LIMIT ?
-        """, (task_id, domain, limit))
+        if limit:
+            cursor.execute("""
+                SELECT DISTINCT page_url FROM domain_occurrences
+                WHERE task_id = ? AND domain = ?
+                LIMIT ?
+            """, (task_id, domain, limit))
+        else:
+            cursor.execute("""
+                SELECT DISTINCT page_url FROM domain_occurrences
+                WHERE task_id = ? AND domain = ?
+            """, (task_id, domain))
         urls = [r[0] for r in cursor.fetchall() if r[0]]
         if not urls:
             cursor.execute("SELECT sample_page_url FROM external_domains WHERE task_id = ? AND domain = ?", (task_id, domain))
@@ -1686,6 +1701,11 @@ def update_external_domain_verify_result(
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE external_domains
+            SET verify_status = ?, verify_time = ?, verify_detail = ?
+            WHERE task_id = ? AND domain = ?
+        """, (status, vtime, detail, task_id, domain))
+        cursor.execute("""
+            UPDATE risk_page_remediations
             SET verify_status = ?, verify_time = ?, verify_detail = ?
             WHERE task_id = ? AND domain = ?
         """, (status, vtime, detail, task_id, domain))

@@ -215,7 +215,7 @@ async def verify_domain_remediation_api(task_id: int, domain: str):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    urls = crud.get_domain_occurrence_urls(task_id, domain, limit=10)
+    urls = crud.get_domain_occurrence_urls(task_id, domain, limit=None)
     verdict = await verify_domain_remediation(domain, urls)
 
     crud.update_external_domain_verify_result(
@@ -225,7 +225,22 @@ async def verify_domain_remediation_api(task_id: int, domain: str):
         verify_time=verdict["verify_time"],
         verify_detail=json.dumps(verdict, ensure_ascii=False)
     )
-    return {"success": True, "domain": domain, "verdict": verdict}
+    total = verdict.get("total_pages", len(urls))
+    cleared = verdict.get("cleared_count", 0)
+    still_present = verdict.get("still_present_count", 0)
+    return {
+        "success": True,
+        "domain": domain,
+        "task_id": task_id,
+        "total_pages": total,
+        "cleared_count": cleared,
+        "still_present_count": still_present,
+        "progress_text": f"{cleared}/{total}",
+        "verify_status": verdict["verify_status"],
+        "verify_time": verdict["verify_time"],
+        "summary": verdict.get("summary", ""),
+        "verdict": verdict
+    }
 
 
 @router.post("/{domain}/verify-page")

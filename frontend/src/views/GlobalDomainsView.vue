@@ -179,8 +179,8 @@
               :key="item.domain"
               class="hover:bg-slate-800/40 transition-colors"
             >
-              <td class="p-4">
-                <div class="font-medium text-slate-100 flex items-center gap-2">
+              <td class="p-4 cursor-pointer" @click="openAssociatedDrawer(item.domain, item)" title="点击查看跨任务关联溯源及代码证据">
+                <div class="font-medium text-slate-100 flex items-center gap-2 hover:text-indigo-400 transition-colors">
                   <Globe class="w-4 h-4 text-slate-400 flex-shrink-0" />
                   <span class="select-all">{{ item.domain }}</span>
                 </div>
@@ -190,8 +190,8 @@
               </td>
               <td class="p-4 text-center">
                 <button
-                  @click="openAssociatedDrawer(item.domain)"
-                  class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-medium bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 hover:bg-indigo-500/20 transition-colors"
+                  @click="openAssociatedDrawer(item.domain, item)"
+                  class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-medium bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 hover:bg-indigo-500/20 transition-colors cursor-pointer"
                   title="点击查看所有关联任务及代码"
                 >
                   <Briefcase class="w-3 h-3" />
@@ -224,7 +224,7 @@
                   <RiskBadge :level="item.risk_level" />
                   <button
                     @click="openAssessModal(item)"
-                    class="text-slate-500 hover:text-amber-400 transition-colors p-0.5"
+                    class="text-slate-500 hover:text-amber-400 transition-colors p-0.5 cursor-pointer"
                     title="快捷研判"
                   >
                     <ShieldAlert class="w-3.5 h-3.5" />
@@ -247,21 +247,21 @@
                 <div class="flex items-center justify-end gap-1.5">
                   <button
                     @click="openAssessModal(item)"
-                    class="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-lg transition-colors"
+                    class="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
                     title="快捷研判与全局情报"
                   >
                     <ShieldAlert class="w-4 h-4" />
                   </button>
                   <button
-                    @click="openAssociatedDrawer(item.domain)"
-                    class="p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded-lg transition-colors"
+                    @click="openAssociatedDrawer(item.domain, item)"
+                    class="p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
                     title="关联任务溯源"
                   >
                     <FileSearch class="w-4 h-4" />
                   </button>
                   <button
                     @click="verifyGlobal(item.domain)"
-                    class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors"
+                    class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
                     :disabled="verifying === item.domain"
                     title="全库跨任务一键复测"
                   >
@@ -286,23 +286,79 @@
     <!-- Associated Tasks Drawer -->
     <Drawer
       :model-value="drawerOpen"
-      :title="`跨任务关联溯源: ${currentDomain}`"
       size="xl"
       @update:model-value="drawerOpen = $event"
     >
+      <template #title>
+        <div class="flex items-center gap-2.5 flex-wrap">
+          <Globe class="w-5 h-5 text-indigo-400 flex-shrink-0" />
+          <span class="font-mono text-base font-bold">跨任务关联溯源: {{ currentDomain }}</span>
+          <RiskBadge v-if="currentDomainItem?.risk_level" :level="currentDomainItem.risk_level" />
+          <StatusBadge v-if="currentDomainItem?.verify_status" :status="currentDomainItem.verify_status" type="verify" />
+        </div>
+      </template>
+
       <div class="space-y-4">
+        <!-- Risk Domain Verification & Remediation Banner -->
+        <div
+          v-if="isRiskDomain || currentDomainItem?.verify_status"
+          class="bg-slate-950 border border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm"
+        >
+          <div class="space-y-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <ShieldAlert v-if="isRiskDomain" class="w-4 h-4 text-rose-400 flex-shrink-0" />
+              <ShieldCheck v-else class="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              <span class="text-xs font-bold text-slate-200">
+                {{ isRiskDomain ? '风险域名处置与闭环复测' : '外部域名跨任务复测' }}
+              </span>
+              <RiskBadge v-if="currentDomainItem?.risk_level" :level="currentDomainItem.risk_level" />
+              <StatusBadge :status="currentDomainItem?.verify_status || 'unverified'" type="verify" />
+            </div>
+            <p class="text-[11px] text-slate-400">
+              {{
+                currentDomainItem?.verify_status === 'verified_clean'
+                  ? '全系统跨任务复测结论：已完全清除修复，所有关联页面的违规外链均已下线移除。'
+                  : (currentDomainItem?.verify_status === 'verified_failed'
+                    ? '全系统跨任务复测结论：仍存在未清除代码，请参考下方各任务开展专项修复整改。'
+                    : '全量扫描该风险域名在所有任务中的历史涉险页面代码，自动检测是否已彻底修复移除。')
+              }}
+            </p>
+          </div>
+
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <button
+              @click="verifyGlobal(currentDomain)"
+              :disabled="verifying === currentDomain"
+              class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-600/20 transition cursor-pointer"
+              title="一键并发复测所有关联任务下的全部页面代码"
+            >
+              <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': verifying === currentDomain }" />
+              <span>{{ verifying === currentDomain ? '全库检测中...' : '跨任务一键复测' }}</span>
+            </button>
+            <button
+              @click="openAssessModal(currentDomainItem || { domain: currentDomain })"
+              class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded-lg text-xs font-medium flex items-center gap-1 transition cursor-pointer"
+              title="修改研判风险等级与情报规则"
+            >
+              <ShieldAlert class="w-3.5 h-3.5" />
+              <span>快捷研判</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Task Count and Export Toolbar -->
         <div class="flex items-center justify-between bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs text-slate-400">
           <span>共在 <strong class="text-indigo-400">{{ store.associatedTasks.length }}</strong> 个扫描任务中检测到该外部域名</span>
           <div class="flex items-center gap-2">
             <button
               @click="exportAssociatedCsv"
-              class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs flex items-center gap-1 border border-slate-700"
+              class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs flex items-center gap-1 border border-slate-700 cursor-pointer"
             >
               <Download class="w-3.5 h-3.5" /> 导出关联 CSV
             </button>
             <button
               @click="exportAssociatedJson"
-              class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs flex items-center gap-1 border border-slate-700"
+              class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs flex items-center gap-1 border border-slate-700 cursor-pointer"
             >
               <Download class="w-3.5 h-3.5" /> 导出关联 JSON
             </button>
@@ -325,28 +381,90 @@
             class="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3"
           >
             <!-- Task Header -->
-            <div class="flex items-center justify-between">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
               <div>
                 <div class="font-medium text-slate-200 text-sm flex items-center gap-2">
                   <span>{{ t.task_name || `任务 #${t.task_id}` }}</span>
                   <StatusBadge :status="t.task_status" type="task" />
                 </div>
-                <div class="text-xs text-slate-400 font-mono mt-0.5">
-                  目标站点: {{ t.target_url }}
+                <div class="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-1.5">
+                  <span>目标站点:</span>
+                  <a :href="t.target_url" target="_blank" class="text-slate-300 hover:text-indigo-400 hover:underline truncate max-w-sm font-mono" :title="t.target_url">
+                    {{ t.target_url }}
+                  </a>
                 </div>
               </div>
 
-              <div class="flex items-center gap-2">
-                <span class="px-2 py-0.5 rounded text-xs font-mono bg-slate-900 border border-slate-800 text-indigo-400">
-                  发现频次: {{ t.occurrence_count }} 次
+              <div class="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-end">
+                <span class="px-2 py-1 rounded text-xs font-mono bg-slate-900 border border-slate-800 text-indigo-400 flex-shrink-0">
+                  频次: {{ t.occurrence_count }} 次
                 </span>
+
+                <!-- Task Verification Status Badge -->
+                <StatusBadge v-if="t.verify_status" :status="t.verify_status" type="verify" class="flex-shrink-0" />
+
+                <!-- 修复检测 Button -->
+                <button
+                  @click="verifyTask(t.task_id, currentDomain)"
+                  :disabled="taskVerifying[t.task_id] || verifying === currentDomain"
+                  class="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded text-xs font-medium flex items-center gap-1 transition-colors disabled:opacity-50 cursor-pointer flex-shrink-0"
+                  :title="`全量检测任务 #${t.task_id} 下该域名的全部页面代码是否已彻底移除`"
+                >
+                  <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': taskVerifying[t.task_id] }" />
+                  <span>{{ taskVerifying[t.task_id] ? '检测中...' : '修复检测' }}</span>
+                </button>
+
+                <!-- 进入工作台 -->
                 <router-link
                   :to="`/tasks/${t.task_id}`"
-                  class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-medium flex items-center gap-1 border border-slate-700"
+                  class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-medium flex items-center gap-1 border border-slate-700 flex-shrink-0"
                 >
-                  进入工作台
+                  工作台
                   <ExternalLink class="w-3 h-3" />
                 </router-link>
+              </div>
+            </div>
+
+            <!-- Task Verification Progress & Summary Details -->
+            <div
+              v-if="t.verify_status || t.verify_progress || taskVerifying[t.task_id]"
+              class="bg-slate-900/80 border border-slate-800/90 rounded-lg p-3 space-y-2 text-xs"
+            >
+              <div class="flex items-center justify-between gap-2 flex-wrap">
+                <div class="flex items-center gap-2">
+                  <span class="text-slate-400 font-medium">任务复测进度:</span>
+                  <span v-if="t.total_pages > 0" class="font-mono text-xs font-bold"
+                    :class="t.verify_status === 'verified_clean' ? 'text-emerald-400' : 'text-amber-400'"
+                  >
+                    已清除 {{ t.cleared_count || 0 }} / 仍存留 {{ t.still_present_count || 0 }} (共 {{ t.total_pages }} 个页面)
+                  </span>
+                  <span v-else-if="taskVerifying[t.task_id]" class="text-indigo-400 font-mono flex items-center gap-1">
+                    <Loader2 class="w-3 h-3 animate-spin" />
+                    正在并发拉取并复测全部关联页面...
+                  </span>
+                  <span v-else-if="t.verify_progress" class="font-mono text-slate-300">
+                    {{ t.verify_progress }}
+                  </span>
+                </div>
+                <span v-if="t.verify_time" class="text-slate-500 font-mono text-[11px]">
+                  复测时间: {{ t.verify_time }}
+                </span>
+              </div>
+
+              <!-- Progress Bar -->
+              <div v-if="t.total_pages > 0" class="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden flex">
+                <div
+                  class="bg-emerald-500 h-full transition-all duration-500"
+                  :style="{ width: `${Math.round(((t.cleared_count || 0) / t.total_pages) * 100)}%` }"
+                ></div>
+                <div
+                  class="bg-rose-500 h-full transition-all duration-500"
+                  :style="{ width: `${Math.round(((t.still_present_count || 0) / t.total_pages) * 100)}%` }"
+                ></div>
+              </div>
+
+              <div v-if="t.verify_summary" class="text-[11px] text-slate-400">
+                {{ t.verify_summary }}
               </div>
             </div>
 
@@ -652,9 +770,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import {
-  Database, Globe, Layers, Briefcase, ShieldAlert, Download,
+  Database, Globe, Layers, Briefcase, ShieldAlert, ShieldCheck, Download,
   RefreshCw, Search, FileSearch, ExternalLink, Loader2
 } from 'lucide-vue-next'
 import { useGlobalDomainsStore } from '@/stores/globalDomains'
@@ -673,7 +791,14 @@ const ui = useUIStore()
 
 const drawerOpen = ref(false)
 const currentDomain = ref('')
+const currentDomainItem = ref(null)
 const verifying = ref(null)
+const taskVerifying = ref({})
+
+const isRiskDomain = computed(() => {
+  const level = currentDomainItem.value?.risk_level
+  return ['critical', 'high', 'medium', 'low'].includes(level)
+})
 
 // Assess modal state
 const assessModalOpen = ref(false)
@@ -761,6 +886,10 @@ const submitAssess = async () => {
     await client.post('/risk-profiles', payload)
     ui.showToast(`研判规则已生效！目标: ${payload.match_type === 'root' ? '*.' : ''}${payload.domain}`, 'success')
     assessModalOpen.value = false
+    if (currentDomainItem.value && (currentDomainItem.value.domain === payload.domain || currentDomainItem.value.root_domain === payload.domain)) {
+      currentDomainItem.value.risk_level = payload.risk_level
+      currentDomainItem.value.risk_tags = payload.tags
+    }
     await Promise.all([
       store.loadDomains(store.page),
       store.loadStats()
@@ -796,8 +925,9 @@ const refresh = async () => {
   ])
 }
 
-const openAssociatedDrawer = async (domain) => {
+const openAssociatedDrawer = async (domain, item = null) => {
   currentDomain.value = domain
+  currentDomainItem.value = item || store.domains.find(d => d.domain === domain) || null
   drawerOpen.value = true
   await store.loadAssociatedTasks(domain)
 }
@@ -805,11 +935,33 @@ const openAssociatedDrawer = async (domain) => {
 const verifyGlobal = async (domain) => {
   verifying.value = domain
   try {
-    await store.verifyDomainAcrossTasks(domain)
+    const res = await store.verifyDomainAcrossTasks(domain)
+    if (res?.overall_status && currentDomainItem.value) {
+      currentDomainItem.value.verify_status = res.overall_status
+    }
   } catch (e) {
     // handled by store toast
   } finally {
     verifying.value = null
+  }
+}
+
+const verifyTask = async (taskId, domain) => {
+  taskVerifying.value[taskId] = true
+  try {
+    const res = await store.verifyDomainInTask(domain, taskId)
+    if (res?.verify_status && currentDomainItem.value) {
+      const allClean = store.associatedTasks.every(t => t.verify_status === 'verified_clean')
+      if (allClean) {
+        currentDomainItem.value.verify_status = 'verified_clean'
+      } else if (res.verify_status === 'verified_failed') {
+        currentDomainItem.value.verify_status = 'verified_failed'
+      }
+    }
+  } catch (e) {
+    // handled in store
+  } finally {
+    taskVerifying.value[taskId] = false
   }
 }
 
