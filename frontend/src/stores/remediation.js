@@ -120,6 +120,9 @@ export const useRemediationStore = defineStore('remediation', () => {
         item.verify_status = res.verify_status
         item.last_verified_at = res.verify_time
         item.last_verify_detail = res.verify_detail
+        if (res.manual_status) {
+          item.manual_status = res.manual_status
+        }
       }
       ui.showToast('页面复测完成: ' + res.verify_detail, res.verify_status === 'verified_clean' || res.verify_status === 'page_removed' ? 'success' : 'warn')
       await loadStats()

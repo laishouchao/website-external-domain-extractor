@@ -1711,13 +1711,21 @@ def update_external_domain_verify_result(
         """, (status, vtime, detail, task_id, domain))
 
         # Synchronize to risk_page_remediations using its exact schema:
-        # columns: verify_status, last_verified_at, last_verify_detail, updated_at
+        # columns: verify_status, last_verified_at, last_verify_detail, manual_status, manual_remark, updated_at
+        now = now_iso()
         if status == "verified_clean":
             cursor.execute("""
                 UPDATE risk_page_remediations
-                SET verify_status = 'verified_clean', last_verified_at = ?, last_verify_detail = ?, updated_at = ?
+                SET verify_status = 'verified_clean', last_verified_at = ?, last_verify_detail = ?,
+                    manual_status = CASE WHEN manual_status != 'ignored' THEN 'resolved' ELSE manual_status END,
+                    manual_remark = CASE 
+                        WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR manual_remark LIKE '%工单重新打开%')
+                        THEN '系统复测已清除，工单自动完结' 
+                        ELSE manual_remark 
+                    END,
+                    updated_at = ?
                 WHERE task_id = ? AND domain = ?
-            """, (vtime, detail, now_iso(), task_id, domain))
+            """, (vtime, detail, now, task_id, domain))
         elif isinstance(verdict_dict, dict) and "details" in verdict_dict and verdict_dict["details"]:
             for item in verdict_dict["details"]:
                 p_url = item.get("url")
@@ -1725,17 +1733,50 @@ def update_external_domain_verify_result(
                 if p_url:
                     p_status = "verified_clean" if p_found is False else ("verified_failed" if p_found is True else "error")
                     p_detail = json.dumps(item, ensure_ascii=False)
-                    cursor.execute("""
-                        UPDATE risk_page_remediations
-                        SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?, updated_at = ?
-                        WHERE task_id = ? AND domain = ? AND page_url = ?
-                    """, (p_status, vtime, p_detail, now_iso(), task_id, domain, p_url))
+                    if p_status == "verified_clean":
+                        cursor.execute("""
+                            UPDATE risk_page_remediations
+                            SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
+                                manual_status = CASE WHEN manual_status != 'ignored' THEN 'resolved' ELSE manual_status END,
+                                manual_remark = CASE 
+                                    WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR manual_remark LIKE '%工单重新打开%')
+                                    THEN '系统复测已清除，工单自动完结' 
+                                    ELSE manual_remark 
+                                END,
+                                updated_at = ?
+                            WHERE task_id = ? AND domain = ? AND page_url = ?
+                        """, (p_status, vtime, p_detail, now, task_id, domain, p_url))
+                    elif p_status == "verified_failed":
+                        cursor.execute("""
+                            UPDATE risk_page_remediations
+                            SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
+                                manual_status = CASE WHEN manual_status = 'resolved' THEN 'pending' ELSE manual_status END,
+                                manual_remark = CASE 
+                                    WHEN manual_status = 'resolved' 
+                                    THEN '【复测告警】检测到违规外链再次出现，工单重新打开待处置' 
+                                    ELSE manual_remark 
+                                END,
+                                updated_at = ?
+                            WHERE task_id = ? AND domain = ? AND page_url = ?
+                        """, (p_status, vtime, p_detail, now, task_id, domain, p_url))
+                    else:
+                        cursor.execute("""
+                            UPDATE risk_page_remediations
+                            SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?, updated_at = ?
+                            WHERE task_id = ? AND domain = ? AND page_url = ?
+                        """, (p_status, vtime, p_detail, now, task_id, domain, p_url))
         else:
             cursor.execute("""
                 UPDATE risk_page_remediations
-                SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?, updated_at = ?
+                SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
+                    manual_status = CASE 
+                        WHEN ? IN ('verified_clean', 'page_removed') AND manual_status != 'ignored' THEN 'resolved'
+                        WHEN ? = 'verified_failed' AND manual_status = 'resolved' THEN 'pending'
+                        ELSE manual_status 
+                    END,
+                    updated_at = ?
                 WHERE task_id = ? AND domain = ?
-            """, (status, vtime, detail, now_iso(), task_id, domain))
+            """, (status, vtime, detail, status, status, now, task_id, domain))
         return True
 
 
@@ -2307,23 +2348,119 @@ def update_risk_remediation_verify_result(
     verify_time: str,
     verify_detail: str,
     context_snippet: Optional[str] = None
-):
-    """Update single risk page verification verdict."""
+) -> dict:
+    """
+    Update single risk page verification verdict:
+    - If verified_clean / page_removed: marks ticket manual_status as 'resolved' (unless ignored).
+    - If verified_failed: if ticket was 'resolved', reopens ticket manual_status to 'pending'.
+    - Synchronizes domain-level verification status in external_domains when all pages are clean or when failed.
+    """
     with db_session() as conn:
         cursor = conn.cursor()
-        if context_snippet:
-            cursor.execute("""
-                UPDATE risk_page_remediations
-                SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
-                    context_snippet = ?, updated_at = ?
-                WHERE id = ?
-            """, (verify_status, verify_time, verify_detail, context_snippet, now_iso(), remediation_id))
+        now = now_iso()
+
+        if verify_status in ('verified_clean', 'page_removed'):
+            if context_snippet:
+                cursor.execute("""
+                    UPDATE risk_page_remediations
+                    SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
+                        context_snippet = ?,
+                        manual_status = CASE WHEN manual_status != 'ignored' THEN 'resolved' ELSE manual_status END,
+                        manual_remark = CASE 
+                            WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR manual_remark LIKE '%工单重新打开%')
+                            THEN '系统自动复测：违规外链已清除，工单自动完结'
+                            ELSE manual_remark 
+                        END,
+                        updated_at = ?
+                    WHERE id = ?
+                """, (verify_status, verify_time, verify_detail, context_snippet, now, remediation_id))
+            else:
+                cursor.execute("""
+                    UPDATE risk_page_remediations
+                    SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
+                        manual_status = CASE WHEN manual_status != 'ignored' THEN 'resolved' ELSE manual_status END,
+                        manual_remark = CASE 
+                            WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR manual_remark LIKE '%工单重新打开%')
+                            THEN '系统自动复测：违规外链已清除，工单自动完结'
+                            ELSE manual_remark 
+                        END,
+                        updated_at = ?
+                    WHERE id = ?
+                """, (verify_status, verify_time, verify_detail, now, remediation_id))
+        elif verify_status == 'verified_failed':
+            if context_snippet:
+                cursor.execute("""
+                    UPDATE risk_page_remediations
+                    SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
+                        context_snippet = ?,
+                        manual_status = CASE WHEN manual_status = 'resolved' THEN 'pending' ELSE manual_status END,
+                        manual_remark = CASE 
+                            WHEN manual_status = 'resolved' 
+                            THEN '【复测告警】检测到违规外链再次出现，工单重新打开待处置'
+                            ELSE manual_remark 
+                        END,
+                        updated_at = ?
+                    WHERE id = ?
+                """, (verify_status, verify_time, verify_detail, context_snippet, now, remediation_id))
+            else:
+                cursor.execute("""
+                    UPDATE risk_page_remediations
+                    SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
+                        manual_status = CASE WHEN manual_status = 'resolved' THEN 'pending' ELSE manual_status END,
+                        manual_remark = CASE 
+                            WHEN manual_status = 'resolved' 
+                            THEN '【复测告警】检测到违规外链再次出现，工单重新打开待处置'
+                            ELSE manual_remark 
+                        END,
+                        updated_at = ?
+                    WHERE id = ?
+                """, (verify_status, verify_time, verify_detail, now, remediation_id))
         else:
-            cursor.execute("""
-                UPDATE risk_page_remediations
-                SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?, updated_at = ?
-                WHERE id = ?
-            """, (verify_status, verify_time, verify_detail, now_iso(), remediation_id))
+            if context_snippet:
+                cursor.execute("""
+                    UPDATE risk_page_remediations
+                    SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
+                        context_snippet = ?, updated_at = ?
+                    WHERE id = ?
+                """, (verify_status, verify_time, verify_detail, context_snippet, now, remediation_id))
+            else:
+                cursor.execute("""
+                    UPDATE risk_page_remediations
+                    SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?, updated_at = ?
+                    WHERE id = ?
+                """, (verify_status, verify_time, verify_detail, now, remediation_id))
+
+        cursor.execute("SELECT manual_status, task_id, domain FROM risk_page_remediations WHERE id = ?", (remediation_id,))
+        curr = cursor.fetchone()
+        current_manual_status = curr["manual_status"] if curr else "pending"
+
+        # Synchronize external_domains status
+        if curr:
+            t_id, dom = curr["task_id"], curr["domain"]
+            if verify_status in ('verified_clean', 'page_removed'):
+                cursor.execute("""
+                    SELECT COUNT(*) as remaining
+                    FROM risk_page_remediations
+                    WHERE task_id = ? AND domain = ?
+                      AND verify_status NOT IN ('verified_clean', 'page_removed')
+                """, (t_id, dom))
+                rem = cursor.fetchone()
+                if rem and rem["remaining"] == 0:
+                    cursor.execute("""
+                        UPDATE external_domains
+                        SET verify_status = 'verified_clean', verify_time = ?,
+                            verify_detail = '【系统复测】所有涉险页面均已完成修复清除，工单闭环。'
+                        WHERE task_id = ? AND domain = ?
+                    """, (verify_time, t_id, dom))
+            elif verify_status == 'verified_failed':
+                cursor.execute("""
+                    UPDATE external_domains
+                    SET verify_status = 'verified_failed', verify_time = ?,
+                        verify_detail = ?
+                    WHERE task_id = ? AND domain = ?
+                """, (verify_time, verify_detail, t_id, dom))
+
+        return {"manual_status": current_manual_status}
 
 
 def batch_update_risk_remediations_manual_status(
@@ -2399,13 +2536,18 @@ def mark_remediation_rollback_failed(
     verify_detail: str,
     context_snippet: Optional[str] = None
 ):
-    """Mark a previously remediated item as verified_failed when rollback/regression is detected, and sync external_domains."""
+    """Mark a previously remediated item as verified_failed when rollback/regression is detected, reopen ticket to pending, and sync external_domains."""
     with db_session() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE risk_page_remediations
-            SET verify_status = 'verified_failed', last_verified_at = ?, last_verify_detail = ?,
-                context_snippet = COALESCE(?, context_snippet), updated_at = ?
+            SET verify_status = 'verified_failed',
+                last_verified_at = ?,
+                last_verify_detail = ?,
+                context_snippet = COALESCE(?, context_snippet),
+                manual_status = 'pending',
+                manual_remark = '【防回滚告警】已修复记录重新检测到违规外链，工单重新打开待处置',
+                updated_at = ?
             WHERE id = ?
         """, (verify_time, verify_detail, context_snippet, now_iso(), remediation_id))
         cursor.execute("""
@@ -2413,6 +2555,38 @@ def mark_remediation_rollback_failed(
             SET verify_status = 'verified_failed', verify_time = ?, verify_detail = ?
             WHERE task_id = ? AND domain = ?
         """, (verify_time, verify_detail, task_id, domain))
+
+
+def sync_existing_remediation_manual_statuses() -> dict:
+    """
+    Synchronize manual ticket status for existing remediation records:
+    1. Records verified clean or removed -> mark manual_status as 'resolved' (ticket finished).
+    2. Records verified failed that were resolved -> reopen manual_status to 'pending'.
+    """
+    with db_session() as conn:
+        cursor = conn.cursor()
+        now = now_iso()
+        cursor.execute("""
+            UPDATE risk_page_remediations
+            SET manual_status = 'resolved',
+                manual_remark = COALESCE(NULLIF(manual_remark, ''), '系统自动复测：违规外链已清除，工单自动完结'),
+                updated_at = ?
+            WHERE verify_status IN ('verified_clean', 'page_removed')
+              AND manual_status NOT IN ('resolved', 'ignored')
+        """, (now,))
+        resolved_count = cursor.rowcount
+
+        cursor.execute("""
+            UPDATE risk_page_remediations
+            SET manual_status = 'pending',
+                manual_remark = '【复测告警】检测到违规外链再次出现，工单重新打开待处置',
+                updated_at = ?
+            WHERE verify_status = 'verified_failed'
+              AND manual_status = 'resolved'
+        """, (now,))
+        reopened_count = cursor.rowcount
+
+        return {"auto_resolved": resolved_count, "reopened": reopened_count}
 
 
 

@@ -24,7 +24,9 @@ async def lifespan(app: FastAPI):
     init_db()
     # Resume cleaning any dangling tasks stuck in 'deleting' status from previous runs
     asyncio.create_task(asyncio.to_thread(crud.purge_dangling_deleting_tasks))
-    # Start 10-minute periodic risk page remediation verifier
+    # Sync ticket statuses for already remediated / regressed records
+    asyncio.create_task(asyncio.to_thread(crud.sync_existing_remediation_manual_statuses))
+    # Start periodic risk page remediation verifier
     verifier = PeriodicRiskVerifier.get_instance()
     verifier.start()
     yield

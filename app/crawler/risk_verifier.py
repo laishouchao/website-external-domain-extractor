@@ -132,7 +132,7 @@ async def verify_single_risk_page(
         if should_close_client:
             await client.aclose()
 
-    await asyncio.to_thread(
+    res_update = await asyncio.to_thread(
         crud.update_risk_remediation_verify_result,
         remediation_id=remediation_id,
         verify_status=verify_status,
@@ -140,12 +140,14 @@ async def verify_single_risk_page(
         verify_detail=verify_detail,
         context_snippet=new_snippet
     )
+    manual_status = res_update.get("manual_status", "pending") if isinstance(res_update, dict) else "pending"
 
     return {
         "id": remediation_id,
         "page_url": page_url,
         "domain": target_domain,
         "verify_status": verify_status,
+        "manual_status": manual_status,
         "verify_time": now_str,
         "verify_detail": verify_detail
     }
