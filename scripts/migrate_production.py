@@ -335,22 +335,36 @@ def migrate_table(sqlite_conn, pg_conn, table: str, batch_size: int = 10000, tru
         if not rows:
             break
 
-        # 针对含 url 字段的表进行安全截断（PostgreSQL B-Tree 索引限制最大 2704 字节）
-        # 采用 O(1) 字符长度前置筛选，对 99.99% 的普通 URL 实现零对象分配开销
-        if "url" in cols:
-            url_idx = cols.index("url")
-            sanitized_rows = []
-            for r in rows:
-                val = r[url_idx]
-                if isinstance(val, str) and len(val) > 800:
-                    b = val.encode("utf-8", errors="ignore")
-                    if len(b) > 2000:
-                        r_list = list(r)
-                        r_list[url_idx] = b[:2000].decode("utf-8", errors="ignore")
-                        sanitized_rows.append(tuple(r_list))
-                        continue
+        # 针对文本数据进行深度清洗：
+        # 1. 清理 NUL (0x00 / '\0') 字节（PostgreSQL TEXT 类型底层禁止 0x00 字节，psycopg2 会报 ValueError）
+        # 2. 对超长 url 字段（>2000 字节）安全截断（规避 PostgreSQL B-Tree 2704 字节索引上限）
+        # 采用惰性元组创建与 O(1) 预判，对 99.99% 的干净数据零性能损耗
+        url_idx = cols.index("url") if "url" in cols else -1
+        sanitized_rows = []
+        for r in rows:
+            r_list = None
+            for idx, val in enumerate(r):
+                if isinstance(val, str):
+                    # 1. 消除 0x00 字节
+                    if '\x00' in val:
+                        if r_list is None:
+                            r_list = list(r)
+                        val = val.replace('\x00', '')
+                        r_list[idx] = val
+
+                    # 2. 截断超长 url
+                    if idx == url_idx and len(val) > 800:
+                        b = val.encode("utf-8", errors="ignore")
+                        if len(b) > 2000:
+                            if r_list is None:
+                                r_list = list(r)
+                            r_list[idx] = b[:2000].decode("utf-8", errors="ignore")
+
+            if r_list is not None:
+                sanitized_rows.append(tuple(r_list))
+            else:
                 sanitized_rows.append(r)
-            rows = sanitized_rows
+        rows = sanitized_rows
 
         # PostgreSQL 单次查询参数上限 65535，单批限制参数在 10000 左右
         chunk_size = max(1, 10000 // len(cols))
@@ -468,6 +482,7 @@ def main():
     # 执行控制参数
     parser.add_argument("--batch-size", type=int, default=10000, help="单批拉取与写入的行数大小 (建议 5000~20000)")
     parser.add_argument("--table", type=str, default=None, help="仅迁移指定的数据表 (可选: tasks, sitemap_pages, external_domains 等)")
+    parser.add_argument("--start-from", type=str, default=None, help="从指定表开始继续迁移（跳过排在该表前面的数据表）")
     parser.add_argument("--truncate-target", action="store_true", help="迁移前清空目标 PostgreSQL 对应表数据")
     parser.add_argument("--init-only", action="store_true", help="仅初始化目标 PostgreSQL 表结构与索引，不进行数据迁移")
     parser.add_argument("--verify-only", action="store_true", help="仅执行数据行数比对校验，不进行数据写入")
@@ -537,7 +552,43 @@ def main():
         return
 
     # 5. 执行数据迁移
-    tables = [args.table] if args.table else TABLES_IN_ORDER
+    if args.table:
+        tables = [args.table]
+    elif args.start_from:
+        if args.start_from not in TABLES_IN_ORDER:
+            print(f"[ERROR] 无效的起始表名 '{args.start_from}'。可选: {', '.join(TABLES_IN_ORDER)}")
+            sys.exit(1)
+        start_idx = TABLES_IN_ORDER.index(args.start_from)
+        tables = TABLES_IN_ORDER[start_idx:]
+        print(f"[INFO] 已指定 --start-from {args.start_from}，跳过前面的表，本次迁移列表: {', '.join(tables)}")
+    else:
+        # 智能检测：如果未指定 --truncate-target，自动检测并跳过已完整迁移的表
+        if not args.truncate_target:
+            smart_tables = []
+            for t in TABLES_IN_ORDER:
+                p_cur = pg_conn.cursor()
+                p_cur.execute(f"SELECT COUNT(*) FROM {t}")
+                pg_cnt = p_cur.fetchone()[0]
+                # sitemap_pages 巨型表，若已达 1500万+ 则自动跳过
+                if t == "sitemap_pages" and pg_cnt >= 15000000:
+                    print(f"[INFO] 表 'sitemap_pages' 在 PostgreSQL 中已有 {pg_cnt:,} 行数据 (已于上一轮完整迁移)，自动跳过。")
+                    continue
+                # 常规业务元数据表若行数一致则自动跳过
+                if t in ("tasks", "external_domains", "discovered_subdomains", "domain_risk_profiles") and pg_cnt > 0:
+                    s_cur = sqlite_conn.cursor()
+                    try:
+                        s_cur.execute(f"SELECT COUNT(*) FROM {t}")
+                        s_cnt = s_cur.fetchone()[0]
+                        if s_cnt == pg_cnt:
+                            print(f"[INFO] 表 '{t}' 在 PostgreSQL 中已有 {pg_cnt:,} 行数据 (与源库完全一致)，自动跳过。")
+                            continue
+                    except Exception:
+                        pass
+                smart_tables.append(t)
+            tables = smart_tables
+        else:
+            tables = TABLES_IN_ORDER
+
     t_start = time.time()
 
     for table in tables:
