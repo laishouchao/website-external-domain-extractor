@@ -6,8 +6,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True, parents=True)
 
-# Database path
+# Database engine configuration ('postgresql' or 'sqlite')
+DB_TYPE = os.getenv("DB_TYPE", "postgresql").lower()
+
+# SQLite configuration
 DB_PATH = DATA_DIR / "crawler.db"
+
+# PostgreSQL configuration
+PG_HOST = os.getenv("PG_HOST", "202.194.101.181")
+PG_PORT = int(os.getenv("PG_PORT", 5432))
+PG_USER = os.getenv("PG_USER", "postgres")
+PG_PASSWORD = os.getenv("PG_PASSWORD", "Cernet@2026")
+PG_DATABASE = os.getenv("PG_DATABASE", "website_domain_db")
+PG_POOL_SIZE = int(os.getenv("PG_POOL_SIZE", 25))
 
 # Server configuration
 HOST = os.getenv("HOST", "0.0.0.0")

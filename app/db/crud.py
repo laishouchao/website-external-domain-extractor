@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from app.db.database import db_session
+from app.config import DB_TYPE
 from app.crawler.risk_engine import evaluate_domain_risk
 
 def now_iso() -> str:
@@ -222,10 +223,10 @@ def save_crawl_result(task_id: int, page_data: dict, external_domains: List[dict
                         risk_level, risk_tags, risk_remark, risk_source, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(task_id, domain) DO UPDATE SET
-                        occurrence_count = occurrence_count + excluded.occurrence_count,
-                        has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE has_link END,
-                        has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE has_text END,
-                        sample_page_url = CASE WHEN sample_page_url = '' THEN excluded.sample_page_url ELSE sample_page_url END
+                        occurrence_count = external_domains.occurrence_count + excluded.occurrence_count,
+                        has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE external_domains.has_link END,
+                        has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE external_domains.has_text END,
+                        sample_page_url = CASE WHEN external_domains.sample_page_url = '' THEN excluded.sample_page_url ELSE external_domains.sample_page_url END
                 """, (
                     task_id,
                     d['domain'],
@@ -250,10 +251,10 @@ def save_crawl_result(task_id: int, page_data: dict, external_domains: List[dict
                         has_link, has_text, sample_page_url, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(task_id, subdomain) DO UPDATE SET
-                        occurrence_count = occurrence_count + excluded.occurrence_count,
-                        has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE has_link END,
-                        has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE has_text END,
-                        sample_page_url = CASE WHEN sample_page_url = '' THEN excluded.sample_page_url ELSE sample_page_url END
+                        occurrence_count = discovered_subdomains.occurrence_count + excluded.occurrence_count,
+                        has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE discovered_subdomains.has_link END,
+                        has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE discovered_subdomains.has_text END,
+                        sample_page_url = CASE WHEN discovered_subdomains.sample_page_url = '' THEN excluded.sample_page_url ELSE discovered_subdomains.sample_page_url END
                 """, (
                     task_id,
                     s['subdomain'],
@@ -308,10 +309,10 @@ def save_asset_scan_result(task_id: int, asset_url: str, external_domains: List[
                         has_link, has_text, sample_page_url, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(task_id, domain) DO UPDATE SET
-                        occurrence_count = occurrence_count + excluded.occurrence_count,
-                        has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE has_link END,
-                        has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE has_text END,
-                        sample_page_url = CASE WHEN sample_page_url = '' THEN excluded.sample_page_url ELSE sample_page_url END
+                        occurrence_count = external_domains.occurrence_count + excluded.occurrence_count,
+                        has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE external_domains.has_link END,
+                        has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE external_domains.has_text END,
+                        sample_page_url = CASE WHEN external_domains.sample_page_url = '' THEN excluded.sample_page_url ELSE external_domains.sample_page_url END
                 """, (
                     task_id,
                     d['domain'],
@@ -332,10 +333,10 @@ def save_asset_scan_result(task_id: int, asset_url: str, external_domains: List[
                         has_link, has_text, sample_page_url, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(task_id, subdomain) DO UPDATE SET
-                        occurrence_count = occurrence_count + excluded.occurrence_count,
-                        has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE has_link END,
-                        has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE has_text END,
-                        sample_page_url = CASE WHEN sample_page_url = '' THEN excluded.sample_page_url ELSE sample_page_url END
+                        occurrence_count = discovered_subdomains.occurrence_count + excluded.occurrence_count,
+                        has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE discovered_subdomains.has_link END,
+                        has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE discovered_subdomains.has_text END,
+                        sample_page_url = CASE WHEN discovered_subdomains.sample_page_url = '' THEN excluded.sample_page_url ELSE discovered_subdomains.sample_page_url END
                 """, (
                     task_id,
                     s['subdomain'],
@@ -450,10 +451,10 @@ def save_crawl_results_batch(
                     risk_level, risk_tags, risk_remark, risk_source, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id, domain) DO UPDATE SET
-                    occurrence_count = occurrence_count + excluded.occurrence_count,
-                    has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE has_link END,
-                    has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE has_text END,
-                    sample_page_url = CASE WHEN sample_page_url = '' THEN excluded.sample_page_url ELSE sample_page_url END
+                    occurrence_count = external_domains.occurrence_count + excluded.occurrence_count,
+                    has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE external_domains.has_link END,
+                    has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE external_domains.has_text END,
+                    sample_page_url = CASE WHEN external_domains.sample_page_url = '' THEN excluded.sample_page_url ELSE external_domains.sample_page_url END
             """, (
                 task_id,
                 d['domain'],
@@ -496,10 +497,10 @@ def save_crawl_results_batch(
                     has_link, has_text, sample_page_url, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id, subdomain) DO UPDATE SET
-                    occurrence_count = occurrence_count + excluded.occurrence_count,
-                    has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE has_link END,
-                    has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE has_text END,
-                    sample_page_url = CASE WHEN sample_page_url = '' THEN excluded.sample_page_url ELSE sample_page_url END
+                    occurrence_count = discovered_subdomains.occurrence_count + excluded.occurrence_count,
+                    has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE discovered_subdomains.has_link END,
+                    has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE discovered_subdomains.has_text END,
+                    sample_page_url = CASE WHEN discovered_subdomains.sample_page_url = '' THEN excluded.sample_page_url ELSE discovered_subdomains.sample_page_url END
             """, (
                 task_id,
                 s['subdomain'],
@@ -634,10 +635,10 @@ def upsert_external_domains(task_id: int, domains_data: List[dict]):
                     has_link, has_text, sample_page_url, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id, domain) DO UPDATE SET
-                    occurrence_count = occurrence_count + excluded.occurrence_count,
-                    has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE has_link END,
-                    has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE has_text END,
-                    sample_page_url = CASE WHEN sample_page_url = '' THEN excluded.sample_page_url ELSE sample_page_url END
+                    occurrence_count = external_domains.occurrence_count + excluded.occurrence_count,
+                    has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE external_domains.has_link END,
+                    has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE external_domains.has_text END,
+                    sample_page_url = CASE WHEN external_domains.sample_page_url = '' THEN excluded.sample_page_url ELSE external_domains.sample_page_url END
             """, (
                 task_id,
                 d['domain'],
@@ -1167,7 +1168,7 @@ def list_global_external_domains(
                 WHERE {where_sql}
                 GROUP BY ed.domain
                 {having_sql}
-            )
+            ) as sub_cnt
         """
         cursor.execute(count_sql, params + having_params)
         total = cursor.fetchone()[0]
@@ -1184,6 +1185,11 @@ def list_global_external_domains(
         }
         col = valid_cols.get(sort_by, 'total_occurrences')
         direction = 'ASC' if order.upper() == 'ASC' else 'DESC'
+
+        if DB_TYPE == "postgresql":
+            tasks_agg = "STRING_AGG(CONCAT(t.id, ':::', t.name, ':::', ed.occurrence_count), ';;;')"
+        else:
+            tasks_agg = "GROUP_CONCAT(t.id || ':::' || t.name || ':::' || ed.occurrence_count, ';;;')"
 
         # Main query
         main_sql = f"""
@@ -1202,11 +1208,11 @@ def list_global_external_domains(
                 MAX(ed.risk_remark) as risk_remark,
                 MAX(ed.verify_status) as verify_status,
                 MAX(ed.verify_time) as verify_time,
-                GROUP_CONCAT(t.id || ':::' || t.name || ':::' || ed.occurrence_count, ';;;') as tasks_summary_raw
+                {tasks_agg} as tasks_summary_raw
             FROM external_domains ed
             JOIN tasks t ON ed.task_id = t.id
             WHERE {where_sql}
-            GROUP BY ed.domain
+            GROUP BY ed.domain, ed.root_domain
             {having_sql}
             ORDER BY {col} {direction}, ed.domain ASC
             LIMIT ? OFFSET ?
@@ -1278,7 +1284,7 @@ def get_global_domains_stats() -> dict:
         cursor.execute("""
             SELECT COUNT(*) FROM (
                 SELECT domain FROM external_domains GROUP BY domain HAVING COUNT(DISTINCT task_id) >= 2
-            )
+            ) as sub_shared
         """)
         shared_domains_count = cursor.fetchone()[0]
 
@@ -1331,7 +1337,7 @@ def get_global_domains_stats() -> dict:
         cursor.execute("""
             SELECT 
                 domain,
-                root_domain,
+                MAX(root_domain) as root_domain,
                 COUNT(DISTINCT task_id) as task_count,
                 SUM(occurrence_count) as total_occurrences
             FROM external_domains
