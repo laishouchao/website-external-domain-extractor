@@ -156,13 +156,12 @@
               <th class="p-4 text-center">累计引用频次</th>
               <th class="p-4">来源类型</th>
               <th class="p-4">风险等级</th>
-              <th class="p-4">复测状态</th>
               <th class="p-4 text-right">操作</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-800/60 font-normal">
             <tr v-if="store.loading" class="text-center py-8">
-              <td colspan="8" class="p-8 text-slate-500">
+              <td colspan="7" class="p-8 text-slate-500">
                 <div class="flex items-center justify-center gap-2">
                   <Loader2 class="w-5 h-5 animate-spin text-indigo-400" />
                   <span>正在汇总全网外部域名数据...</span>
@@ -170,7 +169,7 @@
               </td>
             </tr>
             <tr v-else-if="store.domains.length === 0" class="text-center py-8">
-              <td colspan="8" class="p-8 text-slate-500">
+              <td colspan="7" class="p-8 text-slate-500">
                 暂无符合条件的全局外部域名
               </td>
             </tr>
@@ -240,9 +239,6 @@
                   </span>
                 </div>
               </td>
-              <td class="p-4">
-                <StatusBadge :status="item.verify_status || 'unverified'" type="verify" />
-              </td>
               <td class="p-4 text-right">
                 <div class="flex items-center justify-end gap-1.5">
                   <button
@@ -260,6 +256,7 @@
                     <FileSearch class="w-4 h-4" />
                   </button>
                   <button
+                    v-if="isItemRisk(item)"
                     @click="verifyGlobal(item.domain)"
                     class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
                     :disabled="verifying === item.domain"
@@ -294,22 +291,21 @@
           <Globe class="w-5 h-5 text-indigo-400 flex-shrink-0" />
           <span class="font-mono text-base font-bold">跨任务关联溯源: {{ currentDomain }}</span>
           <RiskBadge v-if="currentDomainItem?.risk_level" :level="currentDomainItem.risk_level" />
-          <StatusBadge v-if="currentDomainItem?.verify_status" :status="currentDomainItem.verify_status" type="verify" />
+          <StatusBadge v-if="isRiskDomain && currentDomainItem?.verify_status" :status="currentDomainItem.verify_status" type="verify" />
         </div>
       </template>
 
       <div class="space-y-4">
-        <!-- Risk Domain Verification & Remediation Banner -->
+        <!-- Risk Domain Verification & Remediation Banner (Only for Risk Domains) -->
         <div
-          v-if="isRiskDomain || currentDomainItem?.verify_status"
+          v-if="isRiskDomain"
           class="bg-slate-950 border border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm"
         >
           <div class="space-y-1">
             <div class="flex items-center gap-2 flex-wrap">
-              <ShieldAlert v-if="isRiskDomain" class="w-4 h-4 text-rose-400 flex-shrink-0" />
-              <ShieldCheck v-else class="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              <ShieldAlert class="w-4 h-4 text-rose-400 flex-shrink-0" />
               <span class="text-xs font-bold text-slate-200">
-                {{ isRiskDomain ? '风险域名处置与闭环复测' : '外部域名跨任务复测' }}
+                风险域名处置与闭环复测
               </span>
               <RiskBadge v-if="currentDomainItem?.risk_level" :level="currentDomainItem.risk_level" />
               <StatusBadge :status="currentDomainItem?.verify_status || 'unverified'" type="verify" />
@@ -350,6 +346,14 @@
         <div class="flex items-center justify-between bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs text-slate-400">
           <span>共在 <strong class="text-indigo-400">{{ store.associatedTasks.length }}</strong> 个扫描任务中检测到该外部域名</span>
           <div class="flex items-center gap-2">
+            <button
+              v-if="!isRiskDomain"
+              @click="openAssessModal(currentDomainItem || { domain: currentDomain })"
+              class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded text-xs font-medium flex items-center gap-1 cursor-pointer"
+              title="修改研判风险等级与情报规则"
+            >
+              <ShieldAlert class="w-3.5 h-3.5" /> 快捷研判
+            </button>
             <button
               @click="exportAssociatedCsv"
               class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs flex items-center gap-1 border border-slate-700 cursor-pointer"
@@ -400,11 +404,12 @@
                   频次: {{ t.occurrence_count }} 次
                 </span>
 
-                <!-- Task Verification Status Badge -->
-                <StatusBadge v-if="t.verify_status" :status="t.verify_status" type="verify" class="flex-shrink-0" />
+                <!-- Task Verification Status Badge (Only for Risk Domains) -->
+                <StatusBadge v-if="isRiskDomain && t.verify_status" :status="t.verify_status" type="verify" class="flex-shrink-0" />
 
-                <!-- 修复检测 Button -->
+                <!-- 修复检测 Button (Only for Risk Domains) -->
                 <button
+                  v-if="isRiskDomain"
                   @click="verifyTask(t.task_id, currentDomain)"
                   :disabled="taskVerifying[t.task_id] || verifying === currentDomain"
                   class="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded text-xs font-medium flex items-center gap-1 transition-colors disabled:opacity-50 cursor-pointer flex-shrink-0"
@@ -425,9 +430,9 @@
               </div>
             </div>
 
-            <!-- Task Verification Progress & Summary Details -->
+            <!-- Task Verification Progress & Summary Details (Only for Risk Domains) -->
             <div
-              v-if="t.verify_status || t.verify_progress || taskVerifying[t.task_id] || verifying === currentDomain"
+              v-if="isRiskDomain && (t.verify_status || t.verify_progress || taskVerifying[t.task_id] || verifying === currentDomain)"
               class="bg-slate-900/80 border border-slate-800/90 rounded-lg p-3 space-y-2 text-xs"
             >
               <div class="flex items-center justify-between gap-2 flex-wrap">
@@ -539,9 +544,13 @@ const currentDomainItem = ref(null)
 const verifying = ref(null)
 const taskVerifying = ref({})
 
-const isRiskDomain = computed(() => {
-  const level = currentDomainItem.value?.risk_level
+const isItemRisk = (item) => {
+  const level = item?.risk_level
   return ['critical', 'high', 'medium', 'low'].includes(level)
+}
+
+const isRiskDomain = computed(() => {
+  return isItemRisk(currentDomainItem.value)
 })
 
 // Assess modal state

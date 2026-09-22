@@ -2309,7 +2309,8 @@ def sync_risk_profiles_to_history(domains_filter: Optional[List[str]] = None) ->
 
     if any(p.get("risk_level") in ('critical', 'high', 'medium', 'low') for p in profiles):
         try:
-            sync_risk_pages_from_occurrences()
+            target_domains = [p["domain"].lower().strip().lstrip("*.") for p in profiles if p.get("domain")] if domains_filter else None
+            sync_risk_pages_from_occurrences(domains=target_domains)
         except Exception as e:
             logger.warning(f"Error syncing risk pages after profile history sync: {e}")
 
@@ -2318,18 +2319,32 @@ def sync_risk_profiles_to_history(domains_filter: Optional[List[str]] = None) ->
 
 # ==================== Risk Page Remediation (风险页面待处置专区) ====================
 
-def sync_risk_pages_from_occurrences(task_id: Optional[int] = None) -> dict:
+def sync_risk_pages_from_occurrences(
+    task_id: Optional[int] = None,
+    domains: Optional[List[str]] = None
+) -> dict:
     """
     Extract risk occurrences matching critical/high/medium/low risk domains
     and upsert them into the dedicated risk_page_remediations table.
+    Optionally filters by specific domains for ultra-fast targeted sync.
     """
     now = now_iso()
+    clean_domains = [d.lower().strip().lstrip("*.") for d in domains if d] if domains else []
+
     ch = get_ch_manager()
     if ch.is_available():
         try:
             with db_session() as conn:
                 cursor = conn.cursor()
                 task_filter = "AND ed.task_id = ?" if task_id is not None else ""
+                domain_filter = ""
+                params = [task_id] if task_id is not None else []
+                if clean_domains:
+                    placeholders = ",".join("?" for _ in clean_domains)
+                    domain_filter = f"AND (ed.domain IN ({placeholders}) OR ed.root_domain IN ({placeholders}))"
+                    params.extend(clean_domains)
+                    params.extend(clean_domains)
+
                 sql = f"""
                     SELECT ed.task_id, ed.domain, ed.root_domain, ed.risk_level, ed.risk_tags,
                            ed.risk_remark, ed.verify_status, ed.verify_time, ed.verify_detail
@@ -2338,8 +2353,8 @@ def sync_risk_pages_from_occurrences(task_id: Optional[int] = None) -> dict:
                     WHERE t.status != 'deleting'
                       AND ed.risk_level IN ('critical', 'high', 'medium', 'low')
                       {task_filter}
+                      {domain_filter}
                 """
-                params = [task_id] if task_id is not None else []
                 cursor.execute(sql, params)
                 risk_domains_rows = cursor.fetchall()
 
@@ -2417,6 +2432,14 @@ def sync_risk_pages_from_occurrences(task_id: Optional[int] = None) -> dict:
     with db_session() as conn:
         cursor = conn.cursor()
         task_filter = "AND o.task_id = ?" if task_id is not None else ""
+        domain_filter = ""
+        extra_params = []
+        if clean_domains:
+            placeholders = ",".join("?" for _ in clean_domains)
+            domain_filter = f"AND (o.domain IN ({placeholders}) OR ed.root_domain IN ({placeholders}))"
+            extra_params.extend(clean_domains)
+            extra_params.extend(clean_domains)
+
         sql = f"""
             INSERT INTO risk_page_remediations (
                 task_id, domain, root_domain, page_url, page_title, source_type,
@@ -2444,6 +2467,7 @@ def sync_risk_pages_from_occurrences(task_id: Optional[int] = None) -> dict:
             WHERE t.status != 'deleting'
               AND ed.risk_level IN ('critical', 'high', 'medium', 'low')
               {task_filter}
+              {domain_filter}
             ORDER BY o.task_id, o.domain, o.page_url, LENGTH(COALESCE(o.context_snippet, '')) DESC
             ON CONFLICT(task_id, domain, page_url) DO UPDATE SET
                 risk_level = excluded.risk_level,
@@ -2459,7 +2483,7 @@ def sync_risk_pages_from_occurrences(task_id: Optional[int] = None) -> dict:
                 END,
                 updated_at = excluded.updated_at
         """
-        params = [now, now] + ([task_id] if task_id is not None else [])
+        params = [now, now] + ([task_id] if task_id is not None else []) + extra_params
         cursor.execute(sql, params)
         synced_count = cursor.rowcount
         return {"synced_count": max(0, synced_count)}
