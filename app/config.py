@@ -56,9 +56,9 @@ PORT = int(os.getenv("PORT", 8000))
 DEFAULT_CRAWLER_CONFIG = {
     "max_depth": int(os.getenv("CRAWLER_MAX_DEPTH", 10)),
     "max_pages": int(os.getenv("CRAWLER_MAX_PAGES", 1000)),
-    "concurrency": int(os.getenv("CRAWLER_CONCURRENCY", 15)),
+    "concurrency": int(os.getenv("CRAWLER_CONCURRENCY", 35)),
     "request_delay": float(os.getenv("CRAWLER_REQUEST_DELAY", 0.0)),
-    "batch_size": int(os.getenv("CRAWLER_BATCH_SIZE", 25)),
+    "batch_size": int(os.getenv("CRAWLER_BATCH_SIZE", 50)),
     "timeout": float(os.getenv("CRAWLER_TIMEOUT", 10.0)),
     "user_agent": os.getenv("CRAWLER_USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"),
     "ignore_ssl": _bool_env("CRAWLER_IGNORE_SSL", True),

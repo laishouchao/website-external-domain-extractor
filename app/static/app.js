@@ -35,7 +35,7 @@ const app = createApp({
             config: {
                 max_depth: 10,
                 max_pages: 1000,
-                concurrency: 15,
+                concurrency: 35,
                 request_delay: 0.0,
                 timeout: 10.0,
                 scope_mode: 'root_domain',
@@ -107,7 +107,7 @@ const app = createApp({
             config: {
                 max_depth: 10,
                 max_pages: 1000,
-                concurrency: 15,
+                concurrency: 35,
                 request_delay: 0.0,
                 timeout: 10.0,
                 scope_mode: 'root_domain',

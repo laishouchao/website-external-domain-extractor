@@ -56,10 +56,10 @@
             v-model.number="form.config.concurrency"
             type="number"
             min="1"
-            max="50"
+            max="100"
             class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-sky-500"
           />
-          <span class="text-slate-500 text-[10px]">推荐 10 - 20</span>
+          <span class="text-slate-500 text-[10px]">推荐 25 - 50 (极速模式)</span>
         </div>
       </div>
 
@@ -154,7 +154,7 @@ const form = ref({
   config: {
     max_depth: 10,
     max_pages: 1000,
-    concurrency: 15,
+    concurrency: 35,
     request_delay: 0.0,
     timeout: 10.0,
     scope_mode: 'root_domain',

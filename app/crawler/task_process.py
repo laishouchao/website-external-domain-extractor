@@ -34,12 +34,13 @@ class TaskWorkerRunner:
         self.max_asset_size_bytes = int(self.config.get("max_asset_size_kb", 3072)) * 1024
 
         # Batch persistence settings
-        self.batch_size = max(1, int(self.config.get("batch_size", 30)))
+        self.batch_size = max(1, int(self.config.get("batch_size", 50)))
         self.batch_buffer: List[dict] = []
         self.batch_logs: List[dict] = []
         self.last_flush_time: float = time.time()
         self.last_broadcast_time: float = 0.0
         self.batch_lock: asyncio.Lock = asyncio.Lock()
+        self.db_flush_lock: asyncio.Lock = asyncio.Lock()
 
         self.queue: asyncio.Queue = asyncio.Queue()
         self.asset_queue: asyncio.Queue = asyncio.Queue()
@@ -114,7 +115,7 @@ class TaskWorkerRunner:
             except Exception:
                 pass
 
-    def log(self, level: str, message: str):
+    def log(self, level: str, message: str, emit_ipc: bool = True):
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%S")
         self.batch_logs.append({
             "task_id": self.task_id,
@@ -122,27 +123,36 @@ class TaskWorkerRunner:
             "message": message,
             "created_at": now_iso
         })
-        self.emit_event("log", {
-            "task_id": self.task_id,
-            "level": level.upper(),
-            "message": message,
-            "created_at": now_iso
-        })
+        if emit_ipc:
+            self.emit_event("log", {
+                "task_id": self.task_id,
+                "level": level.upper(),
+                "message": message,
+                "created_at": now_iso
+            })
 
     async def flush_buffer(self, force: bool = False):
-        async with self.batch_lock:
-            now = time.time()
-            if not force:
-                buffer_ready = len(self.batch_buffer) >= self.batch_size or (self.batch_buffer and now - self.last_flush_time >= 0.5)
-                logs_ready = len(self.batch_logs) >= 50 or (self.batch_logs and now - self.last_flush_time >= 1.0)
+        now = time.time()
+        if not force:
+            # If a DB flush is currently in progress, do not block workers
+            if self.db_flush_lock.locked():
+                return
+            async with self.batch_lock:
+                buffer_ready = len(self.batch_buffer) >= self.batch_size or (self.batch_buffer and now - self.last_flush_time >= 2.0)
+                logs_ready = len(self.batch_logs) >= 50 or (self.batch_logs and now - self.last_flush_time >= 2.0)
                 if not buffer_ready and not logs_ready:
                     return
 
-            if self.batch_buffer:
+        async with self.db_flush_lock:
+            # Instantly swap buffer lists under batch_lock in microseconds
+            async with self.batch_lock:
                 items_to_save = self.batch_buffer
                 self.batch_buffer = []
-                self.last_flush_time = now
+                logs_to_save = self.batch_logs
+                self.batch_logs = []
+                self.last_flush_time = time.time()
 
+            if items_to_save:
                 try:
                     last_url = items_to_save[-1]['page_data']['url'] if items_to_save else None
                     await asyncio.to_thread(
@@ -158,9 +168,7 @@ class TaskWorkerRunner:
                 except Exception as e:
                     logger.error(f"Failed to batch save crawl results for task {self.task_id}: {e}\n{traceback.format_exc()}")
 
-            if self.batch_logs:
-                logs_to_save = self.batch_logs
-                self.batch_logs = []
+            if logs_to_save:
                 try:
                     await asyncio.to_thread(crud.batch_add_logs, logs_to_save)
                 except Exception as e:
@@ -214,11 +222,11 @@ class TaskWorkerRunner:
 
         cmd_task = asyncio.create_task(self._cmd_listener_loop())
 
-        asset_concurrency = min(20, max(4, self.concurrency // 2)) if self.scan_asset_content else 0
+        asset_concurrency = min(30, max(8, int(self.concurrency * 0.6))) if self.scan_asset_content else 0
         total_workers = self.concurrency + asset_concurrency
-        max_conn = max(100, total_workers * 2)
-        max_keep = max(50, total_workers)
-        limits = httpx.Limits(max_connections=max_conn, max_keepalive_connections=max_keep, keepalive_expiry=30.0)
+        max_conn = max(200, total_workers * 4)
+        max_keep = max(100, total_workers * 2)
+        limits = httpx.Limits(max_connections=max_conn, max_keepalive_connections=max_keep, keepalive_expiry=60.0)
         headers = {
             "User-Agent": self.user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -457,9 +465,14 @@ class TaskWorkerRunner:
                 if res.error:
                     self.log("WARN", f"[深度 {depth}] 抓取失败 ({res.error}): {url}")
                 else:
-                    self.log("INFO", f"[深度 {depth}] HTTP {res.status_code} ({res.response_time_ms}ms) 提取外部域名 {ext_count_this_page} 个，子域名 {len(subdomains)} 个: {url}")
+                    should_emit = (ext_count_this_page > 0) or (len(subdomains) > 0) or (self.pages_crawled % 25 == 0)
+                    self.log(
+                        "INFO",
+                        f"[深度 {depth}] HTTP {res.status_code} ({res.response_time_ms}ms) 提取外部域名 {ext_count_this_page} 个，子域名 {len(subdomains)} 个: {url}",
+                        emit_ipc=should_emit
+                    )
 
-                if len(self.batch_buffer) >= self.batch_size or (now - self.last_flush_time >= 0.5):
+                if len(self.batch_buffer) >= self.batch_size or (now - self.last_flush_time >= 2.0):
                     await self.flush_buffer()
 
                 if now - self.last_broadcast_time >= 0.15:
@@ -590,7 +603,7 @@ class TaskWorkerRunner:
                     "subdomains": subdomains
                 })
 
-            if len(self.batch_buffer) >= self.batch_size or (now - self.last_flush_time >= 0.5):
+            if len(self.batch_buffer) >= self.batch_size or (now - self.last_flush_time >= 2.0):
                 await self.flush_buffer()
 
         except Exception as e:
