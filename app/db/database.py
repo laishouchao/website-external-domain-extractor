@@ -475,6 +475,7 @@ def init_db_postgresql():
         ("idx_occurrences_domain", "CREATE INDEX IF NOT EXISTS idx_occurrences_domain ON domain_occurrences(task_id, domain);"),
         ("idx_occurrences_page", "CREATE INDEX IF NOT EXISTS idx_occurrences_page ON domain_occurrences(page_id);"),
         ("idx_task_logs_task", "CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id);"),
+        ("idx_task_logs_task_id_desc", "CREATE INDEX IF NOT EXISTS idx_task_logs_task_id_desc ON task_logs(task_id, id DESC);"),
         ("idx_extdomains_only_domain", "CREATE INDEX IF NOT EXISTS idx_extdomains_only_domain ON external_domains(domain);"),
         ("idx_extdomains_only_root", "CREATE INDEX IF NOT EXISTS idx_extdomains_only_root ON external_domains(root_domain);"),
         ("idx_subdomains_only_sub", "CREATE INDEX IF NOT EXISTS idx_subdomains_only_sub ON discovered_subdomains(subdomain);"),

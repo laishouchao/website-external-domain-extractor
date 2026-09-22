@@ -203,7 +203,28 @@ def purge_task_data(task_id: int, chunk_size: int = 20000):
             logger.error(f"Error during chunked delete sitemap_pages for task {task_id}: {e}")
             break
 
-    # 3. Clean remaining smaller child tables and tasks record
+    # 3. Chunked delete on task_logs (prevents locking when millions of logs exist)
+    while True:
+        try:
+            with db_session() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    DELETE FROM task_logs
+                    WHERE id IN (
+                        SELECT id FROM task_logs
+                        WHERE task_id = ?
+                        LIMIT ?
+                    )
+                """, (task_id, chunk_size))
+                deleted = cursor.rowcount
+            if deleted == 0:
+                break
+            time.sleep(0.01)
+        except Exception as e:
+            logger.error(f"Error during chunked delete task_logs for task {task_id}: {e}")
+            break
+
+    # 4. Clean remaining smaller child tables and tasks record
     try:
         with db_session() as conn:
             cursor = conn.cursor()

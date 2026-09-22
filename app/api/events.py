@@ -8,16 +8,16 @@ from app.crawler.engine import CrawlEngine
 router = APIRouter(prefix="/api/tasks/{task_id}", tags=["events"])
 
 @router.get("/logs")
-def get_task_logs(task_id: int, limit: int = 100):
-    task = crud.get_task(task_id)
+async def get_task_logs(task_id: int, limit: int = 100):
+    task = await asyncio.to_thread(crud.get_task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    logs = crud.get_recent_logs(task_id, limit=limit)
+    logs = await asyncio.to_thread(crud.get_recent_logs, task_id, limit=limit)
     return {"logs": logs}
 
 @router.get("/events")
 async def stream_task_events(task_id: int):
-    task = crud.get_task(task_id)
+    task = await asyncio.to_thread(crud.get_task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -26,16 +26,15 @@ async def stream_task_events(task_id: int):
 
     async def event_generator():
         # First send initial status
-        current_task = crud.get_task(task_id)
-        if current_task:
-            yield f"data: {json.dumps({'type': 'init', 'data': current_task})}\n\n"
+        yield f"data: {json.dumps({'type': 'init', 'data': task})}\n\n"
 
-        # If job is not in memory or not running, yield heartbeat and exit or wait
+        # If job is not in memory or not running, yield recent logs, status, and clean terminal event
         if not job or not job.is_running:
-            # Yield recent logs
-            recent_logs = crud.get_recent_logs(task_id, limit=50)
+            recent_logs = await asyncio.to_thread(crud.get_recent_logs, task_id, 50)
             for l in recent_logs:
                 yield f"data: {json.dumps({'type': 'log', 'data': l})}\n\n"
+            final_status = task.get("status") or "completed"
+            yield f"data: {json.dumps({'type': 'complete', 'data': {'status': final_status}})}\n\n"
             return
 
         # Subscribe to live job stream

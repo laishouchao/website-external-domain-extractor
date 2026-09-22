@@ -351,13 +351,7 @@ class PeriodicRiskVerifier:
         self.current_progress["started_at"] = start_str
 
         try:
-            # Step 1: Lightweight sync from occurrences (run in worker thread)
-            try:
-                await asyncio.to_thread(crud.sync_risk_pages_from_occurrences)
-            except Exception as e:
-                logger.warning(f"Error syncing risk pages before verification: {e}")
-
-            # Step 2: Fetch pending / failed items to verify (run in worker thread, None = all records)
+            # Step 1: Fetch pending / failed items to verify (sync is handled on task completion or manual click)
             pending_items = await asyncio.to_thread(crud.get_unverified_risk_remediations, None)
             if not pending_items:
                 self.last_run_stats = {
