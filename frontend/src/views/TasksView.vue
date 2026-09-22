@@ -99,11 +99,11 @@
         <!-- Right Quick Actions -->
         <div class="flex items-center gap-2.5 flex-wrap">
           <button
-            @click="tasksStore.loadTasks"
+            @click="tasksStore.loadTasks()"
             class="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition border border-slate-700 flex items-center gap-1.5 text-xs shadow-sm"
             title="刷新列表"
           >
-            <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': tasksStore.loading }" />
+            <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': tasksStore.refreshing || tasksStore.loading }" />
             <span class="hidden sm:inline">刷新</span>
           </button>
 
@@ -205,7 +205,7 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-800/60 text-slate-300">
-            <tr v-if="tasksStore.loading">
+            <tr v-if="tasksStore.loading && tasksStore.tasks.length === 0">
               <td colspan="8" class="py-16 text-center text-slate-500">
                 <div class="flex items-center justify-center gap-2">
                   <Loader2 class="w-5 h-5 animate-spin text-sky-400" />
@@ -213,7 +213,7 @@
                 </div>
               </td>
             </tr>
-            <tr v-else-if="filteredTasks.length === 0">
+            <tr v-else-if="filteredTasks.length === 0 && !tasksStore.loading">
               <td colspan="8" class="py-16 text-center text-slate-500">
                 <div class="text-4xl mb-3">📋</div>
                 <div class="text-slate-300 font-semibold text-sm">暂无匹配的扫描任务</div>
@@ -509,7 +509,7 @@ const startPolling = () => {
   if (pollTimer) return
   pollTimer = setInterval(async () => {
     if (tasksStore.runningTasksCount > 0) {
-      await tasksStore.loadTasks()
+      await tasksStore.loadTasks(true)
     }
   }, 3000)
 }

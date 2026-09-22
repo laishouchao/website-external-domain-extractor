@@ -101,7 +101,7 @@
           </router-link>
         </div>
 
-        <div v-if="tasksStore.loading" class="py-12 text-center text-slate-500">
+        <div v-if="tasksStore.loading && tasksStore.tasks.length === 0" class="py-12 text-center text-slate-500">
           <Loader2 class="w-6 h-6 animate-spin mx-auto text-sky-400 mb-2" />
           <span class="text-xs">正在汇总重点扫描任务...</span>
         </div>

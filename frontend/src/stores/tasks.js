@@ -8,6 +8,7 @@ export const useTasksStore = defineStore('tasks', () => {
   const tasks = ref([])
   const activeTask = ref(null)
   const loading = ref(false)
+  const refreshing = ref(false)
   const selectedTaskIds = ref([])
   const deletingTaskIds = ref([])
 
@@ -16,20 +17,44 @@ export const useTasksStore = defineStore('tasks', () => {
   const totalExtDomainsFound = computed(() => tasks.value.reduce((acc, t) => acc + (t.external_domains_count || 0), 0))
   const totalSubdomainsFound = computed(() => tasks.value.reduce((acc, t) => acc + (t.subdomains_count || 0), 0))
 
-  const loadTasks = async () => {
-    loading.value = true
+  const loadTasks = async (silent = false) => {
+    // Only set full-screen/table skeleton loading on first load if no data exists
+    if (!silent && tasks.value.length === 0) {
+      loading.value = true
+    }
+    refreshing.value = true
     try {
       const data = await client.get('/tasks', { params: { limit: 500 } })
       const items = Array.isArray(data) ? data : (data?.tasks || [])
-      tasks.value = items.filter(t => t && t.status !== 'deleting')
+      const newItems = items.filter(t => t && t.status !== 'deleting')
+
+      if (tasks.value.length === 0) {
+        tasks.value = newItems
+      } else {
+        // In-place reconciliation to prevent DOM destruction and screen flickering
+        const existingMap = new Map(tasks.value.map(t => [t.id, t]))
+        const reconciled = []
+        for (const item of newItems) {
+          const existing = existingMap.get(item.id)
+          if (existing) {
+            Object.assign(existing, item)
+            reconciled.push(existing)
+          } else {
+            reconciled.push(item)
+          }
+        }
+        tasks.value = reconciled
+      }
+
       if (activeTask.value) {
         const found = tasks.value.find(t => t.id === activeTask.value.id)
-        if (found) activeTask.value = found
+        if (found) Object.assign(activeTask.value, found)
       }
     } catch (e) {
       console.error('Failed to load tasks:', e)
     } finally {
       loading.value = false
+      refreshing.value = false
     }
   }
 
@@ -159,6 +184,7 @@ export const useTasksStore = defineStore('tasks', () => {
     tasks,
     activeTask,
     loading,
+    refreshing,
     selectedTaskIds,
     deletingTaskIds,
     runningTasksCount,
