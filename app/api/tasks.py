@@ -157,7 +157,7 @@ async def execute_batch_action(req: BatchActionRequest, background_tasks: Backgr
             if engine.pause_task(tid):
                 affected += 1
         elif action == "resume":
-            if engine.resume_task(tid):
+            if await engine.resume_task(tid):
                 affected += 1
         elif action == "stop":
             if engine.stop_task(tid):
@@ -194,9 +194,10 @@ def pause_task(task_id: int):
     return {"success": True, "message": "Task paused"}
 
 @router.post("/{task_id}/resume")
-def resume_task(task_id: int):
+async def resume_task(task_id: int):
     engine = CrawlEngine.get_instance()
-    if not engine.resume_task(task_id):
+    success = await engine.resume_task(task_id)
+    if not success:
         raise HTTPException(status_code=400, detail="Task is not paused or cannot be resumed")
     return {"success": True, "message": "Task resumed"}
 

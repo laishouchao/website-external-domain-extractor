@@ -133,9 +133,14 @@ class CrawlEngine:
                 return True
             except Exception as e:
                 logger.error(f"Failed to pause task {task_id}: {e}")
+        else:
+            task = crud.get_task(task_id)
+            if task and task.get("status") == "running":
+                crud.update_task_status(task_id, "paused")
+                return True
         return False
 
-    def resume_task(self, task_id: int) -> bool:
+    async def resume_task(self, task_id: int) -> bool:
         job = self.jobs.get(task_id)
         if job and job.process and job.process.is_alive():
             try:
@@ -147,6 +152,14 @@ class CrawlEngine:
                 return True
             except Exception as e:
                 logger.error(f"Failed to resume task {task_id}: {e}")
+                return False
+
+        # If worker process is not alive in memory (e.g. after web service restart):
+        task = crud.get_task(task_id)
+        if task and task.get("status") in ("paused", "stopped", "pending", "failed", "running"):
+            logger.info(f"Task {task_id} worker process not found in memory (possibly after restart). Restarting crawler...")
+            return await self.start_task(task_id)
+
         return False
 
     def stop_task(self, task_id: int) -> bool:
@@ -163,7 +176,9 @@ class CrawlEngine:
             crud.update_task_status(task_id, "stopped")
             job.broadcast("status", {"status": "stopped"})
             return True
-        return False
+        else:
+            crud.update_task_status(task_id, "stopped")
+            return True
 
     async def cancel_and_clean_task(self, task_id: int):
         """Immediately stop and clean task worker process and proxy."""

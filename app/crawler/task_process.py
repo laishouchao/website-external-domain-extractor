@@ -58,6 +58,22 @@ class TaskWorkerRunner:
         self.is_running = False
         self.is_stopped = False
 
+        # Restore existing domain / subdomain knowledge to prevent duplicate counts on resume
+        try:
+            with crud.db_session() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT domain FROM external_domains WHERE task_id = ?", (task_id,))
+                for r in cur.fetchall():
+                    self.known_external_domains.add(r[0])
+                self.external_domains_count = len(self.known_external_domains)
+
+                cur.execute("SELECT subdomain FROM discovered_subdomains WHERE task_id = ?", (task_id,))
+                for r in cur.fetchall():
+                    self.known_subdomains.add(r[0])
+                self.subdomains_count = len(self.known_subdomains)
+        except Exception as e:
+            logger.warning(f"Failed to restore domain sets for task {task_id}: {e}")
+
         self.pause_event = asyncio.Event()
         self.pause_event.set()
 
