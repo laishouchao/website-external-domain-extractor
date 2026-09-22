@@ -169,13 +169,22 @@
                 {{ item.created_at ? item.created_at.split(' ')[0] : '-' }}
               </td>
               <td class="p-4 text-right">
-                <button
-                  @click="deleteRule(item.id)"
-                  class="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors"
-                  title="删除此规则"
-                >
-                  <Trash2 class="w-4 h-4" />
-                </button>
+                <div class="flex items-center justify-end gap-1">
+                  <button
+                    @click="openEditModal(item)"
+                    class="p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                    title="编辑此规则"
+                  >
+                    <Edit3 class="w-4 h-4" />
+                  </button>
+                  <button
+                    @click="deleteRule(item.id)"
+                    class="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                    title="删除此规则"
+                  >
+                    <Trash2 class="w-4 h-4" />
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -191,110 +200,13 @@
       />
     </div>
 
-    <!-- Add Rule Modal -->
-    <Modal
-      :model-value="addModalOpen"
-      title="添加威胁情报研判规则"
-      @update:model-value="addModalOpen = $event"
-    >
-      <form @submit.prevent="submitAddRule" class="space-y-4">
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">目标域名 / 模式 <span class="text-rose-400">*</span></label>
-          <input
-            v-model="addForm.domain"
-            type="text"
-            required
-            placeholder="例如: evil.com 或 *.gamble-site.top"
-            class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
-          />
-        </div>
-
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="block text-xs font-medium text-slate-400 mb-1">匹配类型</label>
-            <select
-              v-model="addForm.match_type"
-              class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-            >
-              <option value="root">根域通配 (*.domain.com)</option>
-              <option value="exact">精确子域 (exact match)</option>
-            </select>
-          </div>
-
-          <div>
-            <label class="block text-xs font-medium text-slate-400 mb-1">风险等级</label>
-            <select
-              v-model="addForm.risk_level"
-              class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-            >
-              <option value="critical">严重风险 (Critical)</option>
-              <option value="high">高危风险 (High)</option>
-              <option value="medium">中危风险 (Medium)</option>
-              <option value="low">低危风险 (Low)</option>
-              <option value="safe">安全可信 (Safe)</option>
-            </select>
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">风险分类</label>
-          <input
-            v-model="addForm.category"
-            type="text"
-            placeholder="例如: 黑产博彩, 暗链挂马, 纯IP非法外链"
-            class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-          />
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">安全标签 (逗号分隔)</label>
-          <input
-            v-model="addForm.tagsInput"
-            type="text"
-            placeholder="例如: 赌博, 涉诈, 僵尸外链"
-            class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-          />
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">研判说明与依据</label>
-          <textarea
-            v-model="addForm.remark"
-            rows="3"
-            placeholder="威胁情报来源、被篡改证据等说明..."
-            class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-          ></textarea>
-        </div>
-
-        <div class="flex items-center gap-2 pt-2 border-t border-slate-800">
-          <input
-            id="syncToHistory"
-            v-model="addForm.sync_to_history"
-            type="checkbox"
-            class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer"
-          />
-          <label for="syncToHistory" class="text-xs text-slate-300 cursor-pointer select-none">
-            立即全量回溯到现有历史扫描任务并更新违规标记
-          </label>
-        </div>
-
-        <div class="flex justify-end gap-2 pt-4 border-t border-slate-800">
-          <button
-            type="button"
-            @click="addModalOpen = false"
-            class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm"
-          >
-            取消
-          </button>
-          <button
-            type="submit"
-            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium"
-          >
-            确认添加规则
-          </button>
-        </div>
-      </form>
-    </Modal>
+    <!-- Threat Intel Rule Assess/Add Modal (与全局外部域名快捷研判弹窗保持统一) -->
+    <RiskAssessModal
+      v-model="addModalOpen"
+      :item="activeProfile"
+      :title="modalTitle"
+      @saved="handleRuleSaved"
+    />
 
     <!-- Batch Import Modal -->
     <Modal
@@ -353,11 +265,12 @@ gov-phish.xyz,critical,仿冒钓鱼,仿冒/欺诈,仿冒政府网站"
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { ShieldAlert, Plus, Upload, RefreshCw, Download, Search, Globe, Trash2, Loader2 } from 'lucide-vue-next'
+import { ShieldAlert, Plus, Upload, RefreshCw, Download, Search, Globe, Trash2, Edit3, Loader2 } from 'lucide-vue-next'
 import { useThreatIntelStore } from '@/stores/threatIntel'
 import RiskBadge from '@/components/common/RiskBadge.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import Modal from '@/components/common/Modal.vue'
+import RiskAssessModal from '@/components/common/RiskAssessModal.vue'
 
 const store = useThreatIntelStore()
 
@@ -365,17 +278,10 @@ const search = ref('')
 const riskLevel = ref('')
 const syncing = ref(false)
 
-// Add Modal
+// Assess/Add/Edit Modal
 const addModalOpen = ref(false)
-const addForm = ref({
-  domain: '',
-  match_type: 'root',
-  risk_level: 'high',
-  category: '',
-  tagsInput: '',
-  remark: '',
-  sync_to_history: true
-})
+const activeProfile = ref(null)
+const modalTitle = ref('添加威胁情报研判规则')
 
 // Batch Modal
 const batchModalOpen = ref(false)
@@ -412,35 +318,19 @@ const deleteRule = async (id) => {
 }
 
 const openAddModal = () => {
-  addForm.value = {
-    domain: '',
-    match_type: 'root',
-    risk_level: 'high',
-    category: '',
-    tagsInput: '',
-    remark: '',
-    sync_to_history: true
-  }
+  activeProfile.value = null
+  modalTitle.value = '添加威胁情报研判规则'
   addModalOpen.value = true
 }
 
-const submitAddRule = async () => {
-  const tags = addForm.value.tagsInput
-    .split(/[,，]/)
-    .map(t => t.trim())
-    .filter(Boolean)
+const openEditModal = (item) => {
+  activeProfile.value = item
+  modalTitle.value = '编辑威胁情报研判规则'
+  addModalOpen.value = true
+}
 
-  await store.addProfile({
-    domain: addForm.value.domain.trim(),
-    match_type: addForm.value.match_type,
-    risk_level: addForm.value.risk_level,
-    category: addForm.value.category.trim(),
-    tags,
-    remark: addForm.value.remark.trim(),
-    sync_to_history: addForm.value.sync_to_history
-  })
-
-  addModalOpen.value = false
+const handleRuleSaved = () => {
+  store.loadProfiles(store.page, search.value, riskLevel.value)
 }
 
 const openBatchModal = () => {
