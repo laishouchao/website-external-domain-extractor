@@ -2106,7 +2106,7 @@ def sync_risk_pages_from_occurrences(task_id: Optional[int] = None) -> dict:
                 verify_status, last_verified_at, last_verify_detail, manual_status,
                 created_at, updated_at
             )
-            SELECT 
+            SELECT DISTINCT ON (o.task_id, o.domain, o.page_url)
                 o.task_id, o.domain, ed.root_domain, o.page_url, '',
                 COALESCE(o.source_type, 'href'),
                 COALESCE(o.raw_match, ''),
@@ -2126,6 +2126,7 @@ def sync_risk_pages_from_occurrences(task_id: Optional[int] = None) -> dict:
             WHERE t.status != 'deleting'
               AND ed.risk_level IN ('critical', 'high', 'medium', 'low')
               {task_filter}
+            ORDER BY o.task_id, o.domain, o.page_url, LENGTH(COALESCE(o.context_snippet, '')) DESC
             ON CONFLICT(task_id, domain, page_url) DO UPDATE SET
                 risk_level = excluded.risk_level,
                 risk_tags = excluded.risk_tags,

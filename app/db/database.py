@@ -1,11 +1,14 @@
 import os
 import queue
 import threading
+import logging
 from contextlib import contextmanager
 from typing import Optional, Any, List, Dict
 from app.config import (
     PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE, PG_POOL_SIZE
 )
+
+logger = logging.getLogger("uvicorn.error")
 
 _pg_pool: Optional["PGConnectionPool"] = None
 _pg_pool_lock = threading.Lock()
@@ -181,6 +184,7 @@ class PGConnectionPool:
                     cur = conn.cursor()
                     cur.execute("SELECT 1;")
                     cur.close()
+                    conn.rollback()  # Reset transaction state so connection is clean
                     return conn
                 except Exception:
                     try:
@@ -216,6 +220,10 @@ class PGConnectionPool:
 
         try:
             conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.rollback()  # Ensure connection is clean and not 'idle in transaction' in pool
         except Exception:
             pass
         try:
@@ -296,11 +304,22 @@ def init_db_postgresql():
     except Exception:
         pass
 
-    with db_session() as conn:
-        cursor = conn.cursor()
+    # 1. Inspect existing tables and indexes to avoid unnecessary DDL and lock contention
+    existing_tables = set()
+    existing_indexes = set()
+    try:
+        with db_session() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';")
+            existing_tables = {row[0].lower() for row in cursor.fetchall()}
+            cursor.execute("SELECT indexname FROM pg_indexes WHERE schemaname = 'public';")
+            existing_indexes = {row[0].lower() for row in cursor.fetchall()}
+    except Exception as e:
+        logger.warning(f"Failed to inspect existing tables and indexes: {e}")
 
-        # Tasks table
-        cursor.execute("""
+    # Tables to create if missing
+    tables = [
+        ("tasks", """
         CREATE TABLE IF NOT EXISTS tasks (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
@@ -317,10 +336,8 @@ def init_db_postgresql():
             error_message TEXT DEFAULT NULL,
             created_at TEXT NOT NULL
         );
-        """)
-
-        # Sitemap pages table
-        cursor.execute("""
+        """),
+        ("sitemap_pages", """
         CREATE TABLE IF NOT EXISTS sitemap_pages (
             id SERIAL PRIMARY KEY,
             task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -336,10 +353,8 @@ def init_db_postgresql():
             error TEXT DEFAULT NULL,
             UNIQUE(task_id, url)
         );
-        """)
-
-        # External domains summary table
-        cursor.execute("""
+        """),
+        ("external_domains", """
         CREATE TABLE IF NOT EXISTS external_domains (
             id SERIAL PRIMARY KEY,
             task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -359,10 +374,8 @@ def init_db_postgresql():
             created_at TEXT NOT NULL,
             UNIQUE(task_id, domain)
         );
-        """)
-
-        # Global domain risk intelligence & profile rules table
-        cursor.execute("""
+        """),
+        ("domain_risk_profiles", """
         CREATE TABLE IF NOT EXISTS domain_risk_profiles (
             id SERIAL PRIMARY KEY,
             domain TEXT NOT NULL UNIQUE,
@@ -375,10 +388,8 @@ def init_db_postgresql():
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
-        """)
-
-        # Domain occurrences detail table (BIGSERIAL for massive scale)
-        cursor.execute("""
+        """),
+        ("domain_occurrences", """
         CREATE TABLE IF NOT EXISTS domain_occurrences (
             id BIGSERIAL PRIMARY KEY,
             task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -390,10 +401,8 @@ def init_db_postgresql():
             context_snippet TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
-        """)
-
-        # Task logs table
-        cursor.execute("""
+        """),
+        ("task_logs", """
         CREATE TABLE IF NOT EXISTS task_logs (
             id SERIAL PRIMARY KEY,
             task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -401,10 +410,8 @@ def init_db_postgresql():
             message TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
-        """)
-
-        # Discovered subdomains summary table
-        cursor.execute("""
+        """),
+        ("discovered_subdomains", """
         CREATE TABLE IF NOT EXISTS discovered_subdomains (
             id SERIAL PRIMARY KEY,
             task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -417,10 +424,8 @@ def init_db_postgresql():
             created_at TEXT NOT NULL,
             UNIQUE(task_id, subdomain)
         );
-        """)
-
-        # Risk page remediations tracking table (Dedicated lightweight remediation workflow table)
-        cursor.execute("""
+        """),
+        ("risk_page_remediations", """
         CREATE TABLE IF NOT EXISTS risk_page_remediations (
             id SERIAL PRIMARY KEY,
             task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -443,34 +448,59 @@ def init_db_postgresql():
             updated_at TEXT NOT NULL,
             UNIQUE(task_id, domain, page_url)
         );
-        """)
+        """),
+    ]
 
-        # Standard B-Tree Indexes (UNIQUE(task_id, url) already creates an index for sitemap_pages)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sitemap_task ON sitemap_pages(task_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_task ON external_domains(task_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_domain ON external_domains(task_id, domain);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_root ON external_domains(task_id, root_domain);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subdomains_task ON discovered_subdomains(task_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subdomains_sub ON discovered_subdomains(task_id, subdomain);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_occurrences_task ON domain_occurrences(task_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_occurrences_domain ON domain_occurrences(task_id, domain);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_occurrences_page ON domain_occurrences(page_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_only_domain ON external_domains(domain);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_only_root ON external_domains(root_domain);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subdomains_only_sub ON discovered_subdomains(subdomain);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_risk ON external_domains(task_id, risk_level);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_verify ON external_domains(task_id, verify_status);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_profile_domain ON domain_risk_profiles(domain);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_profile_level ON domain_risk_profiles(risk_level);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediation_task ON risk_page_remediations(task_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediation_status ON risk_page_remediations(verify_status);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediation_level ON risk_page_remediations(risk_level);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediation_domain ON risk_page_remediations(domain);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_remediation_manual ON risk_page_remediations(manual_status);")
+    for tbl_name, ddl in tables:
+        if tbl_name.lower() not in existing_tables:
+            try:
+                with db_session() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SET lock_timeout = '5s';")
+                    cursor.execute(ddl)
+                existing_tables.add(tbl_name.lower())
+                logger.info(f"Initialized table: {tbl_name}")
+            except Exception as e:
+                logger.error(f"Error initializing table {tbl_name}: {e}")
 
-        # GIN Trigram Indexes for Ultra-Fast Substring/Wildcard Domain Lookups
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_trgm_domain ON external_domains USING gin (domain gin_trgm_ops);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_extdomains_trgm_root ON external_domains USING gin (root_domain gin_trgm_ops);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_occurrences_trgm_domain ON domain_occurrences USING gin (domain gin_trgm_ops);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_profile_trgm_domain ON domain_risk_profiles USING gin (domain gin_trgm_ops);")
+    # Indexes to create if missing
+    indexes = [
+        ("idx_sitemap_task", "CREATE INDEX IF NOT EXISTS idx_sitemap_task ON sitemap_pages(task_id);"),
+        ("idx_extdomains_task", "CREATE INDEX IF NOT EXISTS idx_extdomains_task ON external_domains(task_id);"),
+        ("idx_extdomains_domain", "CREATE INDEX IF NOT EXISTS idx_extdomains_domain ON external_domains(task_id, domain);"),
+        ("idx_extdomains_root", "CREATE INDEX IF NOT EXISTS idx_extdomains_root ON external_domains(task_id, root_domain);"),
+        ("idx_subdomains_task", "CREATE INDEX IF NOT EXISTS idx_subdomains_task ON discovered_subdomains(task_id);"),
+        ("idx_subdomains_sub", "CREATE INDEX IF NOT EXISTS idx_subdomains_sub ON discovered_subdomains(task_id, subdomain);"),
+        ("idx_occurrences_task", "CREATE INDEX IF NOT EXISTS idx_occurrences_task ON domain_occurrences(task_id);"),
+        ("idx_occurrences_domain", "CREATE INDEX IF NOT EXISTS idx_occurrences_domain ON domain_occurrences(task_id, domain);"),
+        ("idx_occurrences_page", "CREATE INDEX IF NOT EXISTS idx_occurrences_page ON domain_occurrences(page_id);"),
+        ("idx_task_logs_task", "CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id);"),
+        ("idx_extdomains_only_domain", "CREATE INDEX IF NOT EXISTS idx_extdomains_only_domain ON external_domains(domain);"),
+        ("idx_extdomains_only_root", "CREATE INDEX IF NOT EXISTS idx_extdomains_only_root ON external_domains(root_domain);"),
+        ("idx_subdomains_only_sub", "CREATE INDEX IF NOT EXISTS idx_subdomains_only_sub ON discovered_subdomains(subdomain);"),
+        ("idx_extdomains_risk", "CREATE INDEX IF NOT EXISTS idx_extdomains_risk ON external_domains(task_id, risk_level);"),
+        ("idx_extdomains_verify", "CREATE INDEX IF NOT EXISTS idx_extdomains_verify ON external_domains(task_id, verify_status);"),
+        ("idx_risk_profile_domain", "CREATE INDEX IF NOT EXISTS idx_risk_profile_domain ON domain_risk_profiles(domain);"),
+        ("idx_risk_profile_level", "CREATE INDEX IF NOT EXISTS idx_risk_profile_level ON domain_risk_profiles(risk_level);"),
+        ("idx_remediation_task", "CREATE INDEX IF NOT EXISTS idx_remediation_task ON risk_page_remediations(task_id);"),
+        ("idx_remediation_status", "CREATE INDEX IF NOT EXISTS idx_remediation_status ON risk_page_remediations(verify_status);"),
+        ("idx_remediation_level", "CREATE INDEX IF NOT EXISTS idx_remediation_level ON risk_page_remediations(risk_level);"),
+        ("idx_remediation_domain", "CREATE INDEX IF NOT EXISTS idx_remediation_domain ON risk_page_remediations(domain);"),
+        ("idx_remediation_manual", "CREATE INDEX IF NOT EXISTS idx_remediation_manual ON risk_page_remediations(manual_status);"),
+        ("idx_extdomains_trgm_domain", "CREATE INDEX IF NOT EXISTS idx_extdomains_trgm_domain ON external_domains USING gin (domain gin_trgm_ops);"),
+        ("idx_extdomains_trgm_root", "CREATE INDEX IF NOT EXISTS idx_extdomains_trgm_root ON external_domains USING gin (root_domain gin_trgm_ops);"),
+        ("idx_occurrences_trgm_domain", "CREATE INDEX IF NOT EXISTS idx_occurrences_trgm_domain ON domain_occurrences USING gin (domain gin_trgm_ops);"),
+        ("idx_risk_profile_trgm_domain", "CREATE INDEX IF NOT EXISTS idx_risk_profile_trgm_domain ON domain_risk_profiles USING gin (domain gin_trgm_ops);"),
+    ]
+
+    for idx_name, ddl in indexes:
+        if idx_name.lower() not in existing_indexes:
+            try:
+                with db_session() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SET lock_timeout = '5s';")
+                    cursor.execute(ddl)
+                existing_indexes.add(idx_name.lower())
+                logger.info(f"Created missing index: {idx_name}")
+            except Exception as e:
+                logger.warning(f"Could not create index {idx_name} (skipped to prevent block): {e}")
