@@ -328,7 +328,7 @@ class ClickHouseManager:
 
         try:
             query = f"""
-                SELECT id, task_id, level, message, formatDateTime(created_at, '%Y-%m-%d %H:%M:%S') AS created_at
+                SELECT id, task_id, level, message, formatDateTime(created_at, '%%Y-%%m-%%d %%H:%%M:%%S') AS created_at
                 FROM {self.database}.task_logs
                 WHERE task_id = %(task_id)s
                 ORDER BY id DESC
@@ -390,7 +390,7 @@ class ClickHouseManager:
             query = f"""
                 SELECT id, task_id, url, path, depth, status_code, content_type, title,
                        response_time_ms, external_domains_count, error,
-                       formatDateTime(crawled_at, '%Y-%m-%d %H:%M:%S') AS crawled_at
+                       formatDateTime(crawled_at, '%%Y-%%m-%%d %%H:%%M:%%S') AS crawled_at
                 FROM {self.database}.sitemap_pages
                 WHERE {where_sql}
                 ORDER BY depth ASC, id ASC
@@ -426,7 +426,7 @@ class ClickHouseManager:
         try:
             query = f"""
                 SELECT id, url, path, depth, status_code, content_type, title,
-                       formatDateTime(crawled_at, '%Y-%m-%d %H:%M:%S') AS crawled_at
+                       formatDateTime(crawled_at, '%%Y-%%m-%%d %%H:%%M:%%S') AS crawled_at
                 FROM {self.database}.sitemap_pages
                 WHERE task_id = %(task_id)s
                 ORDER BY depth ASC, id ASC
@@ -480,7 +480,7 @@ class ClickHouseManager:
             query = f"""
                 SELECT id, task_id, domain, root_domain, page_url, page_title, source_type,
                        raw_match, context_snippet, is_link,
-                       formatDateTime(created_at, '%Y-%m-%d %H:%M:%S') AS created_at
+                       formatDateTime(created_at, '%%Y-%%m-%%d %%H:%%M:%%S') AS created_at
                 FROM {self.database}.domain_occurrences
                 WHERE {where_sql}
                 ORDER BY id DESC
@@ -541,7 +541,7 @@ class ClickHouseManager:
 
             query = f"""
                 SELECT task_id, domain, root_domain, page_url, page_title, source_type,
-                       raw_match, context_snippet, formatDateTime(created_at, '%Y-%m-%d %H:%M:%S') AS created_at
+                       raw_match, context_snippet, formatDateTime(created_at, '%%Y-%%m-%%d %%H:%%M:%%S') AS created_at
                 FROM {self.database}.domain_occurrences
                 WHERE {where_sql}
                 LIMIT 50000
