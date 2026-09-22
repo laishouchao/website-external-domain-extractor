@@ -1,5 +1,6 @@
 import json
 import time
+import threading
 import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
@@ -471,6 +472,45 @@ def save_asset_scan_result(task_id: int, asset_url: str, external_domains: List[
             ])
 
 
+# ==================== In-Memory Risk Profiles Cache ====================
+_risk_profiles_cache: Optional[List[dict]] = None
+_risk_profiles_cache_time: float = 0.0
+_risk_profiles_cache_ttl: float = 60.0  # 60s TTL
+_risk_profiles_lock = threading.Lock()
+
+def get_cached_risk_profiles(force_refresh: bool = False) -> List[dict]:
+    """Return in-memory cached threat intelligence profiles, avoiding high-frequency database roundtrips."""
+    global _risk_profiles_cache, _risk_profiles_cache_time
+    now = time.time()
+    if not force_refresh and _risk_profiles_cache is not None and (now - _risk_profiles_cache_time < _risk_profiles_cache_ttl):
+        return _risk_profiles_cache
+
+    with _risk_profiles_lock:
+        if not force_refresh and _risk_profiles_cache is not None and (now - _risk_profiles_cache_time < _risk_profiles_cache_ttl):
+            return _risk_profiles_cache
+        with db_session() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM domain_risk_profiles ORDER BY id ASC")
+            rows = []
+            for r in cursor.fetchall():
+                item = dict(r)
+                try:
+                    item["tags"] = json.loads(item.get("tags") or "[]")
+                except Exception:
+                    item["tags"] = []
+                rows.append(item)
+            _risk_profiles_cache = rows
+            _risk_profiles_cache_time = time.time()
+            return _risk_profiles_cache
+
+def invalidate_risk_profiles_cache():
+    """Invalidate in-memory risk profiles cache when rules are mutated."""
+    global _risk_profiles_cache, _risk_profiles_cache_time
+    with _risk_profiles_lock:
+        _risk_profiles_cache = None
+        _risk_profiles_cache_time = 0.0
+
+
 def save_crawl_results_batch(
     task_id: int,
     batch_items: List[dict],
@@ -550,23 +590,13 @@ def save_crawl_results_batch(
                 if d.get('has_text'):
                     aggregated_ext[dom]["has_text"] = 1
 
-        cursor.execute("SELECT * FROM domain_risk_profiles")
-        profiles = [dict(r) for r in cursor.fetchall()]
+        # Use in-memory cached risk profiles (eliminates high-frequency SELECT * FROM domain_risk_profiles)
+        profiles = get_cached_risk_profiles()
 
+        ext_to_insert = []
         for d in aggregated_ext.values():
             risk_info = evaluate_domain_risk(d['domain'], d['root_domain'], profiles)
-            cursor.execute("""
-                INSERT INTO external_domains (
-                    task_id, domain, root_domain, occurrence_count,
-                    has_link, has_text, sample_page_url,
-                    risk_level, risk_tags, risk_remark, risk_source, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(task_id, domain) DO UPDATE SET
-                    occurrence_count = external_domains.occurrence_count + excluded.occurrence_count,
-                    has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE external_domains.has_link END,
-                    has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE external_domains.has_text END,
-                    sample_page_url = CASE WHEN external_domains.sample_page_url = '' THEN excluded.sample_page_url ELSE external_domains.sample_page_url END
-            """, (
+            ext_to_insert.append((
                 task_id,
                 d['domain'],
                 d['root_domain'],
@@ -580,6 +610,20 @@ def save_crawl_results_batch(
                 risk_info['risk_source'],
                 now
             ))
+
+        if ext_to_insert:
+            cursor.executemany("""
+                INSERT INTO external_domains (
+                    task_id, domain, root_domain, occurrence_count,
+                    has_link, has_text, sample_page_url,
+                    risk_level, risk_tags, risk_remark, risk_source, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_id, domain) DO UPDATE SET
+                    occurrence_count = external_domains.occurrence_count + excluded.occurrence_count,
+                    has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE external_domains.has_link END,
+                    has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE external_domains.has_text END,
+                    sample_page_url = CASE WHEN external_domains.sample_page_url = '' THEN excluded.sample_page_url ELSE external_domains.sample_page_url END
+            """, ext_to_insert)
 
         # 3. Consolidate and upsert subdomains in-memory
         aggregated_sub: Dict[str, dict] = {}
@@ -601,8 +645,21 @@ def save_crawl_results_batch(
                 if s.get('has_text'):
                     aggregated_sub[sub]["has_text"] = 1
 
-        for s in aggregated_sub.values():
-            cursor.execute("""
+        sub_to_insert = [
+            (
+                task_id,
+                s['subdomain'],
+                s['root_domain'],
+                s['count'],
+                s['has_link'],
+                s['has_text'],
+                s['sample_page_url'],
+                now
+            ) for s in aggregated_sub.values()
+        ]
+
+        if sub_to_insert:
+            cursor.executemany("""
                 INSERT INTO discovered_subdomains (
                     task_id, subdomain, root_domain, occurrence_count,
                     has_link, has_text, sample_page_url, created_at
@@ -612,16 +669,7 @@ def save_crawl_results_batch(
                     has_link = CASE WHEN excluded.has_link = 1 THEN 1 ELSE discovered_subdomains.has_link END,
                     has_text = CASE WHEN excluded.has_text = 1 THEN 1 ELSE discovered_subdomains.has_text END,
                     sample_page_url = CASE WHEN discovered_subdomains.sample_page_url = '' THEN excluded.sample_page_url ELSE discovered_subdomains.sample_page_url END
-            """, (
-                task_id,
-                s['subdomain'],
-                s['root_domain'],
-                s['count'],
-                s['has_link'],
-                s['has_text'],
-                s['sample_page_url'],
-                now
-            ))
+            """, sub_to_insert)
 
         # 4. Insert domain occurrences
         all_occurrences = []
@@ -1847,6 +1895,8 @@ def create_risk_profile(
         """, (clean_domain, match_type, risk_level, category, tags_json, source, remark, now, now))
         profile_id = cursor.lastrowid
 
+    invalidate_risk_profiles_cache()
+
     if sync_to_history:
         sync_risk_profiles_to_history([clean_domain])
 
@@ -1928,18 +1978,7 @@ def list_risk_profiles(
 
 
 def get_all_risk_profiles() -> List[dict]:
-    with db_session() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM domain_risk_profiles ORDER BY id ASC")
-        rows = []
-        for r in cursor.fetchall():
-            item = dict(r)
-            try:
-                item["tags"] = json.loads(item.get("tags") or "[]")
-            except Exception:
-                item["tags"] = []
-            rows.append(item)
-        return rows
+    return get_cached_risk_profiles()
 
 list_risk_profiles_for_eval = get_all_risk_profiles
 
@@ -1967,6 +2006,7 @@ def update_risk_profile(profile_id: int, updates: dict) -> Optional[dict]:
 
         cursor.execute(f"UPDATE domain_risk_profiles SET {', '.join(fields)} WHERE id = ?", params)
 
+    invalidate_risk_profiles_cache()
     return get_risk_profile(profile_id)
 
 
@@ -1974,7 +2014,11 @@ def delete_risk_profile(profile_id: int) -> bool:
     with db_session() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM domain_risk_profiles WHERE id = ?", (profile_id,))
-        return cursor.rowcount > 0
+        success = cursor.rowcount > 0
+
+    if success:
+        invalidate_risk_profiles_cache()
+    return success
 
 
 def batch_import_risk_profiles(items: List[dict], sync_to_history: bool = True) -> int:
@@ -2013,6 +2057,9 @@ def batch_import_risk_profiles(items: List[dict], sync_to_history: bool = True) 
                     updated_at = excluded.updated_at
             """, (dom, match_type, risk_level, category, json.dumps(tags, ensure_ascii=False), source, remark, now, now))
             imported_domains.append(dom)
+
+    if imported_domains:
+        invalidate_risk_profiles_cache()
 
     if sync_to_history and imported_domains:
         sync_risk_profiles_to_history(imported_domains)
