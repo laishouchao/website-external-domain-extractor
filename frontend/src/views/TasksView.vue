@@ -1,22 +1,85 @@
 <template>
   <div class="space-y-6">
+    <!-- 任务数据分析卡片 (Task Analytics Overview) -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+      <MetricCard
+        title="扫描任务总数"
+        :value="tasksStore.tasks.length"
+        :subtext="`已完成: ${countByStatus('completed')} / 待启动: ${countByStatus('pending')}`"
+        value-class="text-white"
+        icon-box-class="bg-sky-950/60 border-sky-800/40 text-sky-400"
+      >
+        <template #icon><ListTodo class="w-5 h-5" /></template>
+      </MetricCard>
+
+      <MetricCard
+        title="正在并发扫描"
+        :value="tasksStore.runningTasksCount"
+        :subtext="tasksStore.runningTasksCount > 0 ? '多协程任务实时扫描中' : '当前暂无运行中的任务'"
+        value-class="text-emerald-400"
+        icon-box-class="bg-emerald-950/60 border-emerald-800/40 text-emerald-400"
+      >
+        <template #icon><Activity class="w-5 h-5" :class="{ 'animate-pulse': tasksStore.runningTasksCount > 0 }" /></template>
+      </MetricCard>
+
+      <MetricCard
+        title="累计爬取页面"
+        :value="tasksStore.totalPagesCrawled"
+        subtext="全深度网页与静态资源"
+        value-class="text-amber-400"
+        icon-box-class="bg-amber-950/60 border-amber-800/40 text-amber-400"
+      >
+        <template #icon><FileText class="w-5 h-5" /></template>
+      </MetricCard>
+
+      <MetricCard
+        title="提取唯一外部域名"
+        :value="tasksStore.totalExtDomainsFound"
+        subtext="源代码与文本深度去重"
+        value-class="text-indigo-400"
+        icon-box-class="bg-indigo-950/60 border-indigo-800/40 text-indigo-400"
+      >
+        <template #icon><Globe class="w-5 h-5" /></template>
+      </MetricCard>
+
+      <MetricCard
+        title="发现本站子域名"
+        :value="tasksStore.totalSubdomainsFound"
+        subtext="递归资产边界拓展识别"
+        value-class="text-cyan-400"
+        icon-box-class="bg-cyan-950/60 border-cyan-800/40 text-cyan-400"
+      >
+        <template #icon><Network class="w-5 h-5" /></template>
+      </MetricCard>
+    </div>
+
     <!-- Header & Search Toolbar -->
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4.5 space-y-4 shadow-lg">
-      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 space-y-4 shadow-lg">
+      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <!-- Search & Filter Controls -->
         <div class="flex flex-wrap items-center gap-3 flex-1">
-          <div class="relative w-full sm:w-72">
+          <!-- Search input -->
+          <div class="relative w-full sm:w-80">
             <input
               v-model="searchQuery"
               placeholder="搜索任务名称或目标域名..."
-              class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500"
+              class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-8 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 transition-colors shadow-inner"
             />
-            <Search class="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-500" />
+            <Search class="w-4 h-4 absolute left-3 top-3 text-slate-500" />
+            <button
+              v-if="searchQuery"
+              @click="searchQuery = ''"
+              class="absolute right-2.5 top-2.5 text-slate-500 hover:text-slate-300 p-0.5 rounded transition"
+              title="清除输入"
+            >
+              <X class="w-3.5 h-3.5" />
+            </button>
           </div>
 
+          <!-- Status Filter Dropdown -->
           <select
             v-model="statusFilter"
-            class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-sky-500"
+            class="bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-sky-500 transition-colors cursor-pointer"
           >
             <option value="">全部任务状态 ({{ tasksStore.tasks.length }})</option>
             <option value="running">正在扫描 ({{ countByStatus('running') }})</option>
@@ -26,16 +89,38 @@
             <option value="stopped">已停止 ({{ countByStatus('stopped') }})</option>
             <option value="failed">失败 ({{ countByStatus('failed') }})</option>
           </select>
+
+          <!-- Match count badge -->
+          <span class="text-xs text-slate-400 hidden sm:inline-flex items-center gap-1 font-mono">
+            共匹配 <strong class="text-sky-400 font-bold">{{ filteredTasks.length }}</strong> 个任务
+          </span>
         </div>
 
         <!-- Right Quick Actions -->
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2.5 flex-wrap">
           <button
             @click="tasksStore.loadTasks"
-            class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition border border-slate-700"
+            class="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition border border-slate-700 flex items-center gap-1.5 text-xs shadow-sm"
             title="刷新列表"
           >
-            <RefreshCw class="w-4 h-4" />
+            <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': tasksStore.loading }" />
+            <span class="hidden sm:inline">刷新</span>
+          </button>
+
+          <button
+            @click="showBatchModal = true"
+            class="px-3.5 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
+          >
+            <Layers class="w-3.5 h-3.5" />
+            <span>批量导入</span>
+          </button>
+
+          <button
+            @click="showCreateModal = true"
+            class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow-md shadow-sky-500/20"
+          >
+            <Plus class="w-4 h-4" />
+            <span>新建扫描</span>
           </button>
         </div>
       </div>
@@ -43,54 +128,54 @@
       <!-- Batch Actions Bar (Shown when multiple selected) -->
       <div
         v-if="tasksStore.selectedTaskIds.length > 0"
-        class="bg-slate-950 p-2.5 rounded-xl border border-sky-900/50 flex flex-wrap items-center justify-between gap-3 text-xs"
+        class="bg-slate-950 p-3 px-4 rounded-xl border border-sky-900/60 flex flex-wrap items-center justify-between gap-3 text-xs shadow-inner"
       >
         <div class="flex items-center gap-2 text-slate-300">
           <CheckSquare class="w-4 h-4 text-sky-400" />
-          <span>已选中 <strong class="text-sky-400 font-mono">{{ tasksStore.selectedTaskIds.length }}</strong> 个扫描任务</span>
+          <span>已选中 <strong class="text-sky-400 font-mono font-bold">{{ tasksStore.selectedTaskIds.length }}</strong> 个扫描任务</span>
+          <button
+            @click="tasksStore.selectedTaskIds = []"
+            class="ml-2 text-slate-400 hover:text-slate-200 underline text-[11px]"
+          >
+            取消选择
+          </button>
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
           <button
             @click="batchAction('start')"
-            class="px-3 py-1 rounded-lg bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 transition flex items-center gap-1 font-medium"
+            class="px-3 py-1.5 rounded-lg bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 transition flex items-center gap-1 font-medium"
           >
             <Play class="w-3 h-3" />
             <span>批量启动</span>
           </button>
           <button
             @click="batchAction('pause')"
-            class="px-3 py-1 rounded-lg bg-amber-950 hover:bg-amber-900 text-amber-300 border border-amber-800/80 transition flex items-center gap-1 font-medium"
+            class="px-3 py-1.5 rounded-lg bg-amber-950 hover:bg-amber-900 text-amber-300 border border-amber-800/80 transition flex items-center gap-1 font-medium"
           >
             <Pause class="w-3 h-3" />
             <span>批量暂停</span>
           </button>
           <button
             @click="batchAction('resume')"
-            class="px-3 py-1 rounded-lg bg-sky-950 hover:bg-sky-900 text-sky-300 border border-sky-800/80 transition flex items-center gap-1 font-medium"
+            class="px-3 py-1.5 rounded-lg bg-sky-950 hover:bg-sky-900 text-sky-300 border border-sky-800/80 transition flex items-center gap-1 font-medium"
           >
             <Play class="w-3 h-3" />
             <span>批量恢复</span>
           </button>
           <button
             @click="batchAction('stop')"
-            class="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1 font-medium"
+            class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1 font-medium"
           >
             <Square class="w-3 h-3" />
             <span>批量停止</span>
           </button>
           <button
             @click="batchAction('delete')"
-            class="px-3 py-1 rounded-lg bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800/80 transition flex items-center gap-1 font-medium"
+            class="px-3 py-1.5 rounded-lg bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800/80 transition flex items-center gap-1 font-medium"
           >
             <Trash2 class="w-3 h-3" />
             <span>批量删除</span>
-          </button>
-          <button
-            @click="tasksStore.selectedTaskIds = []"
-            class="px-2 py-1 rounded text-slate-400 hover:text-slate-200"
-          >
-            取消选择
           </button>
         </div>
       </div>
@@ -130,9 +215,27 @@
             </tr>
             <tr v-else-if="filteredTasks.length === 0">
               <td colspan="8" class="py-16 text-center text-slate-500">
-                <div class="text-3xl mb-2">📋</div>
+                <div class="text-4xl mb-3">📋</div>
                 <div class="text-slate-300 font-semibold text-sm">暂无匹配的扫描任务</div>
-                <div class="text-xs text-slate-500 mt-1">您可以点击右上角「新建扫描」或「批量导入」开启全站深度爬取</div>
+                <div class="text-xs text-slate-500 mt-1 max-w-sm mx-auto leading-relaxed">
+                  您可以尝试更换搜索关键词或筛选状态，或直接创建新的网站全深度扫描任务
+                </div>
+                <div class="flex items-center justify-center gap-3 mt-4">
+                  <button
+                    @click="showCreateModal = true"
+                    class="text-xs font-semibold px-4 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white transition shadow-md shadow-sky-500/20 flex items-center gap-1.5"
+                  >
+                    <Plus class="w-3.5 h-3.5" />
+                    <span>新建扫描任务</span>
+                  </button>
+                  <button
+                    @click="showBatchModal = true"
+                    class="text-xs font-semibold px-4 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 transition flex items-center gap-1.5"
+                  >
+                    <Layers class="w-3.5 h-3.5" />
+                    <span>批量导入任务</span>
+                  </button>
+                </div>
               </td>
             </tr>
 
@@ -169,9 +272,19 @@
                 </div>
               </td>
 
-              <!-- Status -->
+              <!-- Status & Speed -->
               <td class="py-3.5 px-3 whitespace-nowrap">
-                <StatusBadge :status="task.status" />
+                <div class="flex items-center gap-2">
+                  <StatusBadge :status="task.status" />
+                  <span
+                    v-if="task.status === 'running'"
+                    class="px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-800/60 text-emerald-300 font-mono font-semibold text-[11px] inline-flex items-center gap-1 shadow-sm animate-pulse"
+                    title="当前实时扫描速度"
+                  >
+                    <span>⚡</span>
+                    <span>{{ task.current_speed ?? task.speed ?? 0 }} 页/秒</span>
+                  </span>
+                </div>
               </td>
 
               <!-- Crawl Progress Bar -->
@@ -295,11 +408,15 @@
         @page-change="currentPage = $event"
       />
     </div>
+
+    <!-- Modals -->
+    <CreateTaskModal v-model="showCreateModal" />
+    <BatchTaskModal v-model="showBatchModal" />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import {
   Search,
   RefreshCw,
@@ -311,10 +428,20 @@ import {
   RotateCcw,
   ChevronRight,
   Globe,
-  Loader2
+  Loader2,
+  ListTodo,
+  Activity,
+  FileText,
+  Network,
+  Plus,
+  Layers,
+  X
 } from 'lucide-vue-next'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import Pagination from '@/components/common/Pagination.vue'
+import MetricCard from '@/components/common/MetricCard.vue'
+import CreateTaskModal from '@/components/tasks/CreateTaskModal.vue'
+import BatchTaskModal from '@/components/tasks/BatchTaskModal.vue'
 import { useTasksStore } from '@/stores/tasks'
 
 const tasksStore = useTasksStore()
@@ -322,6 +449,11 @@ const searchQuery = ref('')
 const statusFilter = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
+
+const showCreateModal = ref(false)
+const showBatchModal = ref(false)
+
+let pollTimer = null
 
 watch([searchQuery, statusFilter], () => {
   currentPage.value = 1
@@ -373,7 +505,28 @@ const batchAction = (action) => {
   tasksStore.executeBatchAction(action, tasksStore.selectedTaskIds)
 }
 
+const startPolling = () => {
+  if (pollTimer) return
+  pollTimer = setInterval(async () => {
+    if (tasksStore.runningTasksCount > 0) {
+      await tasksStore.loadTasks()
+    }
+  }, 3000)
+}
+
+const stopPolling = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
 onMounted(async () => {
   await tasksStore.loadTasks()
+  startPolling()
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 </script>
