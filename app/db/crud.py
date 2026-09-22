@@ -1719,7 +1719,7 @@ def update_external_domain_verify_result(
                 SET verify_status = 'verified_clean', last_verified_at = ?, last_verify_detail = ?,
                     manual_status = CASE WHEN manual_status != 'ignored' THEN 'resolved' ELSE manual_status END,
                     manual_remark = CASE 
-                        WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR manual_remark LIKE '%工单重新打开%')
+                        WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR POSITION('工单重新打开' IN COALESCE(manual_remark, '')) > 0)
                         THEN '系统复测已清除，工单自动完结' 
                         ELSE manual_remark 
                     END,
@@ -1739,7 +1739,7 @@ def update_external_domain_verify_result(
                             SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
                                 manual_status = CASE WHEN manual_status != 'ignored' THEN 'resolved' ELSE manual_status END,
                                 manual_remark = CASE 
-                                    WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR manual_remark LIKE '%工单重新打开%')
+                                    WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR POSITION('工单重新打开' IN COALESCE(manual_remark, '')) > 0)
                                     THEN '系统复测已清除，工单自动完结' 
                                     ELSE manual_remark 
                                 END,
@@ -2367,7 +2367,7 @@ def update_risk_remediation_verify_result(
                         context_snippet = ?,
                         manual_status = CASE WHEN manual_status != 'ignored' THEN 'resolved' ELSE manual_status END,
                         manual_remark = CASE 
-                            WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR manual_remark LIKE '%工单重新打开%')
+                            WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR POSITION('工单重新打开' IN COALESCE(manual_remark, '')) > 0)
                             THEN '系统自动复测：违规外链已清除，工单自动完结'
                             ELSE manual_remark 
                         END,
@@ -2380,7 +2380,7 @@ def update_risk_remediation_verify_result(
                     SET verify_status = ?, last_verified_at = ?, last_verify_detail = ?,
                         manual_status = CASE WHEN manual_status != 'ignored' THEN 'resolved' ELSE manual_status END,
                         manual_remark = CASE 
-                            WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR manual_remark LIKE '%工单重新打开%')
+                            WHEN manual_status != 'ignored' AND (manual_remark IS NULL OR manual_remark = '' OR POSITION('工单重新打开' IN COALESCE(manual_remark, '')) > 0)
                             THEN '系统自动复测：违规外链已清除，工单自动完结'
                             ELSE manual_remark 
                         END,

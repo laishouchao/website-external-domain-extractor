@@ -56,7 +56,11 @@ class PGCursorWrapper:
             sql_exec = sql_stripped
 
         # Adapt parameter placeholders from '?' to '%s'
-        if "?" in sql_exec:
+        # In psycopg2/pg8000 format paramstyle, any literal '%' in SQL must be escaped to '%%'
+        # when query params are provided, otherwise psycopg2 mistakes literal '%' for param formatters.
+        if params is not None and "?" in sql_exec:
+            sql_exec = sql_exec.replace("%", "%%").replace("?", "%s")
+        elif "?" in sql_exec:
             sql_exec = sql_exec.replace("?", "%s")
 
         if params is None:
@@ -75,7 +79,9 @@ class PGCursorWrapper:
         return res
 
     def executemany(self, sql: str, seq_of_params: Any):
-        if "?" in sql:
+        if seq_of_params and "?" in sql:
+            sql = sql.replace("%", "%%").replace("?", "%s")
+        elif "?" in sql:
             sql = sql.replace("?", "%s")
         return self.cur.executemany(sql, seq_of_params)
 
