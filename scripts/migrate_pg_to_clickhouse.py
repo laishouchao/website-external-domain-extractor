@@ -86,13 +86,25 @@ def migrate_sitemap_pages(ch_mgr, chunk_size: int = 50000, task_id: int = None):
         if not rows:
             break
 
-        last_id = rows[-1][0]
+        last_id = rows[-1]['id']
 
         # Prepare for ClickHouse insert:
         # id, task_id, url, path, depth, status_code, content_type, title, response_time_ms, external_domains_count, error, crawled_at
         ch_data = []
         for r in rows:
-            rid, tid, url, path, depth, status_code, c_type, title, resp_ms, ext_cnt, err, crawled_at = r
+            rid = r['id']
+            tid = r['task_id']
+            url = r['url']
+            path = r['path']
+            depth = r['depth']
+            status_code = r['status_code']
+            c_type = r['content_type']
+            title = r['title']
+            resp_ms = r['response_time_ms']
+            ext_cnt = r['external_domains_count']
+            err = r['error']
+            crawled_at = r['crawled_at']
+
             crawled_dt = datetime.now()
             if crawled_at:
                 try:
@@ -183,11 +195,19 @@ def migrate_domain_occurrences(ch_mgr, chunk_size: int = 50000, task_id: int = N
         if not rows:
             break
 
-        last_id = rows[-1][0]
+        last_id = rows[-1]['id']
 
         ch_data = []
         for r in rows:
-            rid, tid, dom, p_url, src_type, raw_m, snippet, created_at = r
+            rid = r['id']
+            tid = r['task_id']
+            dom = r['domain']
+            p_url = r['page_url']
+            src_type = r['source_type']
+            raw_m = r['raw_match']
+            snippet = r['context_snippet']
+            created_at = r['created_at']
+
             created_dt = datetime.now()
             if created_at:
                 try:
@@ -281,11 +301,16 @@ def migrate_task_logs(ch_mgr, chunk_size: int = 50000, task_id: int = None):
         if not rows:
             break
 
-        last_id = rows[-1][0]
+        last_id = rows[-1]['id']
 
         ch_data = []
         for r in rows:
-            rid, tid, lvl, msg, created_at = r
+            rid = r['id']
+            tid = r['task_id']
+            lvl = r['level']
+            msg = r['message']
+            created_at = r['created_at']
+
             created_dt = datetime.now()
             if created_at:
                 try:
