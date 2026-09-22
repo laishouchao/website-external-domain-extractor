@@ -75,8 +75,8 @@ const app = createApp({
         const remediationTimer = ref({
             is_running: true,
             is_checking: false,
-            interval_seconds: 600,
-            remaining_seconds: 600,
+            interval_seconds: 10800,
+            remaining_seconds: 10800,
             last_run_time: null,
             next_run_time: null,
             last_run_stats: {}

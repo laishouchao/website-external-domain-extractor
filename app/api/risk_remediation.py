@@ -114,7 +114,7 @@ def get_risk_remediation_stats():
 @router.get("/timer-status")
 def get_timer_status():
     """
-    Get the 10-minute periodic verifier's operational status and next run countdown.
+    Get the 3-hour periodic verifier's operational status and next run countdown.
     """
     verifier = PeriodicRiskVerifier.get_instance()
     return verifier.get_status()

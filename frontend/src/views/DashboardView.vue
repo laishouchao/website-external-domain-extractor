@@ -8,7 +8,7 @@
           <h2 class="text-xl font-bold text-white tracking-tight">网络资产测绘与违规外链治理态势</h2>
         </div>
         <p class="text-xs text-slate-400 max-w-2xl leading-relaxed">
-          全自动递归遍历目标站点全部深度页面，深度提取 HTML/JavaScript 代码、正文中的所有非本站外部域名，结合威胁情报规则进行自动化定级研判与 10 分钟闭环复测。
+          全自动递归遍历目标站点全部深度页面，深度提取 HTML/JavaScript 代码、正文中的所有非本站外部域名，结合威胁情报规则进行自动化定级研判与 3 小时闭环复测。
         </p>
       </div>
       <div class="flex items-center gap-3">
@@ -147,7 +147,7 @@
 
       <!-- Quick Action & Intelligence Status (1 Col) -->
       <div class="space-y-6">
-        <!-- 10-Minute Verifier Status Card -->
+        <!-- 3-Hour Verifier Status Card -->
         <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3.5 shadow-lg">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
@@ -160,12 +160,12 @@
           <div class="p-3.5 bg-slate-950/80 rounded-xl border border-slate-800/80 space-y-2 text-xs">
             <div class="flex items-center justify-between text-slate-400">
               <span>轮询状态:</span>
-              <span class="text-emerald-400 font-semibold">10分钟并发多协程轮询</span>
+              <span class="text-emerald-400 font-semibold">3小时并发多协程轮询</span>
             </div>
             <div class="flex items-center justify-between text-slate-400 font-mono">
               <span>下次复测倒计时:</span>
               <span class="text-sky-400 font-bold bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
-                {{ Math.floor((remediationStore.timer?.remaining_seconds || 0) / 60) }}分{{ (remediationStore.timer?.remaining_seconds || 0) % 60 }}秒
+                {{ Math.floor((remediationStore.timer?.remaining_seconds || 0) / 3600) > 0 ? Math.floor((remediationStore.timer?.remaining_seconds || 0) / 3600) + '时' : '' }}{{ Math.floor(((remediationStore.timer?.remaining_seconds || 0) % 3600) / 60) }}分{{ (remediationStore.timer?.remaining_seconds || 0) % 60 }}秒
               </span>
             </div>
             <div v-if="remediationStore.timer?.last_run_stats?.finished_at" class="text-[11px] text-slate-500 pt-1 border-t border-slate-800">

@@ -83,7 +83,7 @@
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-semibold text-slate-200 flex items-center gap-2">
             <Clock class="w-4 h-4 text-amber-400" />
-            10 分钟整改闭环巡检调度器
+            3 小时整改闭环巡检调度器
           </h3>
           <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             Running
@@ -93,7 +93,7 @@
         <div class="space-y-3 text-xs">
           <div class="flex justify-between py-2 border-b border-slate-800/80">
             <span class="text-slate-400">调度周期</span>
-            <span class="font-mono text-amber-300">每 10 分钟 (600 秒) 自动轮询</span>
+            <span class="font-mono text-amber-300">每 3 小时 (10800 秒) 自动轮询</span>
           </div>
           <div class="flex justify-between py-2 border-b border-slate-800/80">
             <span class="text-slate-400">校验对象范围</span>

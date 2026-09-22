@@ -1257,7 +1257,7 @@
                             </h2>
                         </div>
                         <p class="text-xs text-slate-400">
-                            集中管理各扫描任务检出的违规涉险页面 • 自动每10分钟并发多协程复测 • 一键按任务导出排查工单
+                            集中管理各扫描任务检出的违规涉险页面 • 自动每3小时并发多协程复测 • 一键按任务导出排查工单
                         </p>
                     </div>
 
@@ -1281,7 +1281,7 @@
                     </div>
                 </div>
 
-                <!-- 10-Minute Periodic Verifier Status Ribbon -->
+                <!-- 3-Hour Periodic Verifier Status Ribbon -->
                 <div class="bg-slate-900/80 border border-slate-800 rounded-xl px-4 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
                     <div class="flex items-center gap-3">
                         <div class="flex items-center gap-2">
@@ -1292,7 +1292,7 @@
                             <span class="font-semibold text-slate-300">
                                 自动复测调度器:
                                 <span :class="remediationTimer.is_checking ? 'text-amber-400' : 'text-emerald-400'">
-                                    {{ remediationTimer.is_checking ? '正在并发复测中...' : '持续监听 (每10分钟自动轮询)' }}
+                                    {{ remediationTimer.is_checking ? '正在并发复测中...' : '持续监听 (每3小时自动轮询)' }}
                                 </span>
                             </span>
                         </div>
@@ -1300,7 +1300,7 @@
                         <div class="hidden md:flex items-center gap-1 text-slate-400 font-mono">
                             <span>下次复测倒计时:</span>
                             <span class="text-sky-400 font-bold bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-                                {{ Math.floor(remediationTimer.remaining_seconds / 60) }}分{{ remediationTimer.remaining_seconds % 60 }}秒
+                                {{ Math.floor(remediationTimer.remaining_seconds / 3600) > 0 ? Math.floor(remediationTimer.remaining_seconds / 3600) + '时' : '' }}{{ Math.floor((remediationTimer.remaining_seconds % 3600) / 60) }}分{{ remediationTimer.remaining_seconds % 60 }}秒
                             </span>
                         </div>
                     </div>

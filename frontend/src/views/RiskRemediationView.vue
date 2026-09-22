@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-6 w-full min-w-0">
-    <!-- Header & 10-Minute Periodic Verification Ribbon -->
+    <!-- Header & 3-Hour Periodic Verification Ribbon -->
     <div class="flex flex-wrap items-center justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold text-slate-100 flex items-center gap-2.5">
@@ -8,7 +8,7 @@
           风险页面整改处置工作台
         </h1>
         <p class="text-xs text-slate-400 mt-1">
-          实时汇聚所有扫描任务中未修复的涉险页面链接，系统后台每 1 小时自动轮询复测，修复后自动移出；每 2 天 15:00 自动进行防回滚复测，支持针对性整改指引与工单流转
+          实时汇聚所有扫描任务中未修复的涉险页面链接，系统后台每 3 小时自动轮询复测，修复后自动移出；每 2 天 15:00 自动进行防回滚复测，支持针对性整改指引与工单流转
         </p>
       </div>
 
@@ -39,7 +39,7 @@
       </div>
     </div>
 
-    <!-- 1-Hour Timer Automation Status Bar with Real-time Progress & Rollback Info -->
+    <!-- 3-Hour Timer Automation Status Bar with Real-time Progress & Rollback Info -->
     <div class="bg-gradient-to-r from-slate-900 via-indigo-950/30 to-slate-900 border border-indigo-500/20 rounded-xl p-4 space-y-3.5 shadow-sm">
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div class="flex items-center gap-3.5">
@@ -48,7 +48,7 @@
           </div>
           <div>
             <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-sm font-semibold text-slate-200">1 小时自动闭环轮询复测</span>
+              <span class="text-sm font-semibold text-slate-200">3 小时自动闭环轮询复测</span>
               <span
                 v-if="store.timer.is_checking"
                 class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1"
@@ -66,7 +66,7 @@
             </div>
             <div class="text-xs text-slate-400 mt-0.5 flex items-center gap-3 flex-wrap">
               <span v-if="store.timer.is_checking" class="text-amber-300 font-medium">
-                本次复测进行中，结束后 1 小时启动下次自动复测
+                本次复测进行中，结束后 3 小时启动下次自动复测
               </span>
               <span v-else>
                 下次复测倒计时:

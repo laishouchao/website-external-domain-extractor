@@ -161,7 +161,7 @@ class PeriodicRiskVerifier:
     """
     _instance: Optional["PeriodicRiskVerifier"] = None
 
-    def __init__(self, interval_seconds: int = 3600):
+    def __init__(self, interval_seconds: int = 10800):
         self.interval_seconds = interval_seconds
         self._running = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -204,7 +204,7 @@ class PeriodicRiskVerifier:
     @classmethod
     def get_instance(cls) -> "PeriodicRiskVerifier":
         if cls._instance is None:
-            cls._instance = PeriodicRiskVerifier(interval_seconds=3600)
+            cls._instance = PeriodicRiskVerifier(interval_seconds=10800)
         return cls._instance
 
     def _calculate_next_rollback_time(self, last_audit_dt: Optional[datetime] = None) -> str:
@@ -239,7 +239,7 @@ class PeriodicRiskVerifier:
             self._loop = None
         self._task = asyncio.create_task(self._run_loop())
         self._rollback_task = asyncio.create_task(self._rollback_scheduler_loop())
-        logger.info(f"PeriodicRiskVerifier started. Interval: {self.interval_seconds}s (1 hour). Rollback audit target: {self.rollback_audit.get('next_audit_time')}")
+        logger.info(f"PeriodicRiskVerifier started. Interval: {self.interval_seconds}s (3 hours). Rollback audit target: {self.rollback_audit.get('next_audit_time')}")
 
     def stop(self):
         """Stop the background loops."""
@@ -311,7 +311,7 @@ class PeriodicRiskVerifier:
             except Exception as e:
                 logger.error(f"Error during risk verification cycle: {e}", exc_info=True)
 
-            # Update next run time strictly 1 hour after cycle finishes
+            # Update next run time strictly 3 hours after cycle finishes
             self._update_next_run_time()
 
             try:
