@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 
 import asyncio
 from app.db.database import init_db
+from app.db.clickhouse import init_clickhouse
 from app.db import crud
 from app.api.tasks import router as tasks_router
 from app.api.sitemap import router as sitemap_router
@@ -22,6 +23,8 @@ from app.crawler.risk_verifier import PeriodicRiskVerifier
 async def lifespan(app: FastAPI):
     # Startup: Initialize Database
     init_db()
+    # Initialize ClickHouse in background thread
+    asyncio.create_task(asyncio.to_thread(init_clickhouse))
     # Resume cleaning any dangling tasks stuck in 'deleting' status from previous runs
     asyncio.create_task(asyncio.to_thread(crud.purge_dangling_deleting_tasks))
     # Sync ticket statuses for already remediated / regressed records

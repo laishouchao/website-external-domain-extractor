@@ -45,6 +45,16 @@ PG_DATABASE = os.getenv("PG_DATABASE", "website_domain_db")
 PG_POOL_SIZE = int(os.getenv("PG_POOL_SIZE", 25))
 
 # ==============================================================================
+# ClickHouse Database Configuration (OLAP Engine for Big Data & Logs)
+# ==============================================================================
+CH_ENABLED = _bool_env("CH_ENABLED", False)
+CH_HOST = os.getenv("CH_HOST", "localhost")
+CH_PORT = int(os.getenv("CH_PORT", 8123))
+CH_USER = os.getenv("CH_USER", "default")
+CH_PASSWORD = os.getenv("CH_PASSWORD", "")
+CH_DATABASE = os.getenv("CH_DATABASE", "website_domain_db")
+
+# ==============================================================================
 # Server Configuration
 # ==============================================================================
 HOST = os.getenv("HOST", "0.0.0.0")

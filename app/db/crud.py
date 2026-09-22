@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from app.db.database import db_session
 from app.crawler.risk_engine import evaluate_domain_risk
+from app.db.clickhouse import get_ch_manager
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -112,6 +113,9 @@ def update_task_progress(task_id: int, pages_crawled: int, pages_total: int,
 
 def reset_task(task_id: int):
     """Clear all crawled pages, external domains, subdomains, and logs to allow re-running."""
+    ch = get_ch_manager()
+    if ch.is_available():
+        ch.purge_task_data(task_id)
     with db_session() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM sitemap_pages WHERE task_id = ?", (task_id,))
@@ -153,6 +157,11 @@ def purge_task_data(task_id: int, chunk_size: int = 20000):
     import time
     import logging
     logger = logging.getLogger(__name__)
+
+    # 0. Purge from ClickHouse if available
+    ch = get_ch_manager()
+    if ch.is_available():
+        ch.purge_task_data(task_id)
 
     # Ensure status is marked deleting
     mark_task_deleting(task_id)
@@ -576,20 +585,31 @@ def save_crawl_results_batch(
                 item['page_data'].get('error')
             ) for item in batch_items
         ]
-        cursor.executemany("""
-            INSERT INTO sitemap_pages (
-                task_id, url, path, depth, status_code, content_type,
-                title, response_time_ms, external_domains_count, crawled_at, error
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(task_id, url) DO UPDATE SET
-                status_code = excluded.status_code,
-                content_type = excluded.content_type,
-                title = excluded.title,
-                response_time_ms = excluded.response_time_ms,
-                external_domains_count = excluded.external_domains_count,
-                crawled_at = excluded.crawled_at,
-                error = excluded.error
-        """, pages_to_insert)
+
+        ch = get_ch_manager()
+        ch_pages_saved = False
+        if ch.is_available():
+            try:
+                ch_pages_saved = ch.insert_sitemap_pages_batch(task_id, pages_to_insert)
+            except Exception as e:
+                logger.warning(f"[Dual-Engine] ClickHouse sitemap_pages insert failed: {e}. Falling back to PostgreSQL.")
+                ch_pages_saved = False
+
+        if not ch_pages_saved:
+            cursor.executemany("""
+                INSERT INTO sitemap_pages (
+                    task_id, url, path, depth, status_code, content_type,
+                    title, response_time_ms, external_domains_count, crawled_at, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_id, url) DO UPDATE SET
+                    status_code = excluded.status_code,
+                    content_type = excluded.content_type,
+                    title = excluded.title,
+                    response_time_ms = excluded.response_time_ms,
+                    external_domains_count = excluded.external_domains_count,
+                    crawled_at = excluded.crawled_at,
+                    error = excluded.error
+            """, pages_to_insert)
 
         # 2. Consolidate and upsert external domains in-memory before database insert
         aggregated_ext: Dict[str, dict] = {}
@@ -707,11 +727,20 @@ def save_crawl_results_batch(
                     now
                 ))
         if all_occurrences:
-            cursor.executemany("""
-                INSERT INTO domain_occurrences (
-                    task_id, page_id, domain, page_url, source_type, raw_match, context_snippet, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, all_occurrences)
+            ch_occ_saved = False
+            if ch.is_available():
+                try:
+                    ch_occ_saved = ch.insert_domain_occurrences_batch(all_occurrences)
+                except Exception as e:
+                    logger.warning(f"[Dual-Engine] ClickHouse domain_occurrences insert failed: {e}. Falling back to PostgreSQL.")
+                    ch_occ_saved = False
+
+            if not ch_occ_saved:
+                cursor.executemany("""
+                    INSERT INTO domain_occurrences (
+                        task_id, page_id, domain, page_url, source_type, raw_match, context_snippet, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, all_occurrences)
 
         # 5. Update task progress directly in the same transaction
         if pages_crawled is not None and pages_total is not None:
@@ -729,18 +758,44 @@ def add_logs_batch(task_id: int, logs_list: List[dict]):
     """Insert multiple logs in a single transaction."""
     if not logs_list:
         return
+    now = now_iso()
+    ch = get_ch_manager()
+    if ch.is_available():
+        try:
+            ch_logs = [{"task_id": task_id, "level": l['level'], "message": l['message'], "created_at": l.get('timestamp') or now} for l in logs_list]
+            if ch.insert_task_logs_batch(ch_logs):
+                return
+        except Exception as e:
+            logger.warning(f"[Dual-Engine] ClickHouse add_logs_batch error: {e}. Falling back to PostgreSQL.")
+
     with db_session() as conn:
         cursor = conn.cursor()
-        now = now_iso()
         cursor.executemany("""
             INSERT INTO task_logs (task_id, level, message, created_at)
             VALUES (?, ?, ?, ?)
         """, [(task_id, l['level'], l['message'], l.get('timestamp') or now) for l in logs_list])
 
 
-
 def list_pages(task_id: int, depth: Optional[int] = None, status_code: Optional[int] = None,
                search: Optional[str] = None, limit: int = 50, offset: int = 0) -> Tuple[List[dict], int]:
+    ch = get_ch_manager()
+    if ch.is_available():
+        try:
+            ch_res = ch.list_sitemap_pages(
+                task_id=task_id,
+                depth=depth,
+                status_code=status_code,
+                search=search,
+                limit=limit,
+                offset=offset
+            )
+            if ch_res is not None:
+                pages, total = ch_res
+                if total > 0 or (search or depth is not None or status_code is not None):
+                    return pages, total
+        except Exception as e:
+            logger.warning(f"[Dual-Engine] ClickHouse list_sitemap_pages failed: {e}. Falling back to PostgreSQL.")
+
     with db_session() as conn:
         cursor = conn.cursor()
         query = "SELECT * FROM sitemap_pages WHERE task_id = ?"
@@ -778,6 +833,15 @@ def list_pages(task_id: int, depth: Optional[int] = None, status_code: Optional[
         return rows, total
 
 def get_all_pages_urls(task_id: int) -> List[dict]:
+    ch = get_ch_manager()
+    if ch.is_available():
+        try:
+            pages = ch.get_all_pages_urls(task_id)
+            if pages is not None and len(pages) > 0:
+                return pages
+        except Exception as e:
+            logger.warning(f"[Dual-Engine] ClickHouse get_all_pages_urls failed: {e}. Falling back to PostgreSQL.")
+
     with db_session() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -845,25 +909,35 @@ def insert_domain_occurrences(task_id: int, occurrences: List[dict]):
     if not occurrences:
         return
 
-    with db_session() as conn:
-        cursor = conn.cursor()
-        now = now_iso()
-        cursor.executemany("""
-            INSERT INTO domain_occurrences (
-                task_id, page_id, domain, page_url, source_type, raw_match, context_snippet, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, [
-            (
-                task_id,
-                o.get('page_id'),
-                o['domain'],
-                o['page_url'],
-                o['source_type'],
-                o['raw_match'][:500],
-                o['context_snippet'][:1000],
-                now
-            ) for o in occurrences
-        ])
+    ch = get_ch_manager()
+    ch_saved = False
+    if ch.is_available():
+        try:
+            ch_saved = ch.insert_domain_occurrences_batch(occurrences)
+        except Exception as e:
+            logger.warning(f"[Dual-Engine] ClickHouse insert_domain_occurrences failed: {e}. Falling back to PostgreSQL.")
+            ch_saved = False
+
+    if not ch_saved:
+        with db_session() as conn:
+            cursor = conn.cursor()
+            now = now_iso()
+            cursor.executemany("""
+                INSERT INTO domain_occurrences (
+                    task_id, page_id, domain, page_url, source_type, raw_match, context_snippet, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, [
+                (
+                    task_id,
+                    o.get('page_id'),
+                    o['domain'],
+                    o['page_url'],
+                    o['source_type'],
+                    o['raw_match'][:500],
+                    o['context_snippet'][:1000],
+                    now
+                ) for o in occurrences
+            ])
 
 def list_external_domains(task_id: int, has_link: Optional[int] = None,
                           has_text: Optional[int] = None, source_type: Optional[str] = None,
@@ -969,6 +1043,17 @@ def list_external_domains(task_id: int, has_link: Optional[int] = None,
         return rows, total
 
 def get_domain_occurrences(task_id: int, domain: str, limit: int = 50) -> List[dict]:
+    ch = get_ch_manager()
+    if ch.is_available():
+        try:
+            res = ch.list_domain_occurrences(task_id, domain=domain, limit=limit, offset=0)
+            if res is not None:
+                occs, total = res
+                if total > 0:
+                    return occs
+        except Exception as e:
+            logger.warning(f"[Dual-Engine] ClickHouse get_domain_occurrences failed: {e}. Falling back to PostgreSQL.")
+
     with db_session() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -1244,16 +1329,33 @@ def get_subdomains_stats(task_id: int) -> dict:
 # ==================== Task Logs ====================
 
 def add_log(task_id: int, level: str, message: str):
+    now = now_iso()
+    ch = get_ch_manager()
+    if ch.is_available():
+        try:
+            if ch.insert_task_logs_batch([{"task_id": task_id, "level": level, "message": message, "created_at": now}]):
+                return
+        except Exception as e:
+            logger.warning(f"[Dual-Engine] ClickHouse add_log error: {e}. Falling back to PostgreSQL.")
+
     with db_session() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO task_logs (task_id, level, message, created_at)
             VALUES (?, ?, ?, ?)
-        """, (task_id, level.upper(), message, now_iso()))
+        """, (task_id, level.upper(), message, now))
 
 def batch_add_logs(logs: List[dict]):
     if not logs:
         return
+    ch = get_ch_manager()
+    if ch.is_available():
+        try:
+            if ch.insert_task_logs_batch(logs):
+                return
+        except Exception as e:
+            logger.warning(f"[Dual-Engine] ClickHouse batch_add_logs error: {e}. Falling back to PostgreSQL.")
+
     with db_session() as conn:
         cursor = conn.cursor()
         cursor.executemany("""
@@ -1262,6 +1364,15 @@ def batch_add_logs(logs: List[dict]):
         """, [(l["task_id"], l["level"].upper(), l["message"], l.get("created_at") or now_iso()) for l in logs])
 
 def get_recent_logs(task_id: int, limit: int = 100) -> List[dict]:
+    ch = get_ch_manager()
+    if ch.is_available():
+        try:
+            ch_logs = ch.get_recent_logs(task_id, limit=limit)
+            if ch_logs is not None and len(ch_logs) > 0:
+                return ch_logs
+        except Exception as e:
+            logger.warning(f"[Dual-Engine] ClickHouse get_recent_logs failed: {e}. Falling back to PostgreSQL.")
+
     with db_session() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -1596,20 +1707,32 @@ def get_domain_associated_tasks(domain: str, max_occurrences_per_task: Optional[
                 except Exception:
                     pass
 
-            if max_occurrences_per_task is not None:
-                cursor.execute("""
-                    SELECT page_url, source_type, raw_match, context_snippet, created_at
-                    FROM domain_occurrences
-                    WHERE task_id = ? AND domain = ?
-                    LIMIT ?
-                """, (t["task_id"], domain, max_occurrences_per_task))
-            else:
-                cursor.execute("""
-                    SELECT page_url, source_type, raw_match, context_snippet, created_at
-                    FROM domain_occurrences
-                    WHERE task_id = ? AND domain = ?
-                """, (t["task_id"], domain))
-            t["occurrences"] = [dict(r) for r in cursor.fetchall()]
+            ch = get_ch_manager()
+            ch_found = False
+            if ch.is_available():
+                try:
+                    occ_res = ch.list_domain_occurrences(t["task_id"], domain=domain, limit=max_occurrences_per_task or 100)
+                    if occ_res is not None and occ_res[1] > 0:
+                        t["occurrences"] = occ_res[0]
+                        ch_found = True
+                except Exception:
+                    ch_found = False
+
+            if not ch_found:
+                if max_occurrences_per_task is not None:
+                    cursor.execute("""
+                        SELECT page_url, source_type, raw_match, context_snippet, created_at
+                        FROM domain_occurrences
+                        WHERE task_id = ? AND domain = ?
+                        LIMIT ?
+                    """, (t["task_id"], domain, max_occurrences_per_task))
+                else:
+                    cursor.execute("""
+                        SELECT page_url, source_type, raw_match, context_snippet, created_at
+                        FROM domain_occurrences
+                        WHERE task_id = ? AND domain = ?
+                    """, (t["task_id"], domain))
+                t["occurrences"] = [dict(r) for r in cursor.fetchall()]
 
         return tasks_list
 
@@ -1636,6 +1759,15 @@ def get_global_domains_for_export(
 
 def get_domain_occurrence_urls(task_id: int, domain: str, limit: Optional[int] = None) -> List[str]:
     """Get unique occurrence page URLs for targeted remediation re-testing."""
+    ch = get_ch_manager()
+    if ch.is_available():
+        try:
+            urls = ch.get_domain_occurrence_urls(task_id, domain=domain, limit=limit)
+            if urls:
+                return urls
+        except Exception:
+            pass
+
     with db_session() as conn:
         cursor = conn.cursor()
         if limit:
@@ -2190,9 +2322,98 @@ def sync_risk_pages_from_occurrences(task_id: Optional[int] = None) -> dict:
     """
     Extract risk occurrences matching critical/high/medium/low risk domains
     and upsert them into the dedicated risk_page_remediations table.
-    Executes in a single set-based SQL query for maximum performance (<0.1s).
     """
     now = now_iso()
+    ch = get_ch_manager()
+    if ch.is_available():
+        try:
+            with db_session() as conn:
+                cursor = conn.cursor()
+                task_filter = "AND ed.task_id = ?" if task_id is not None else ""
+                sql = f"""
+                    SELECT ed.task_id, ed.domain, ed.root_domain, ed.risk_level, ed.risk_tags,
+                           ed.risk_remark, ed.verify_status, ed.verify_time, ed.verify_detail
+                    FROM external_domains ed
+                    JOIN tasks t ON ed.task_id = t.id
+                    WHERE t.status != 'deleting'
+                      AND ed.risk_level IN ('critical', 'high', 'medium', 'low')
+                      {task_filter}
+                """
+                params = [task_id] if task_id is not None else []
+                cursor.execute(sql, params)
+                risk_domains_rows = cursor.fetchall()
+
+            if not risk_domains_rows:
+                return {"synced_count": 0}
+
+            domain_map = {}
+            domains_list = []
+            for r in risk_domains_rows:
+                key = (r['task_id'], r['domain'])
+                domain_map[key] = dict(r)
+                domains_list.append(r['domain'])
+
+            ch_rows = ch.get_risk_occurrences_for_sync(task_id, list(set(domains_list)))
+            if ch_rows:
+                with db_session() as conn:
+                    cursor = conn.cursor()
+                    insert_data = []
+                    for occ in ch_rows:
+                        tid = occ['task_id']
+                        dom = occ['domain']
+                        meta = domain_map.get((tid, dom))
+                        if not meta:
+                            continue
+                        raw_tags = meta.get('risk_tags') or '[]'
+                        if isinstance(raw_tags, list):
+                            raw_tags = json.dumps(raw_tags, ensure_ascii=False)
+                        insert_data.append((
+                            tid,
+                            dom,
+                            meta.get('root_domain') or occ.get('root_domain') or '',
+                            occ.get('page_url') or '',
+                            occ.get('page_title') or '',
+                            occ.get('source_type') or 'href',
+                            occ.get('raw_match') or '',
+                            occ.get('context_snippet') or '',
+                            meta.get('risk_level') or 'medium',
+                            raw_tags,
+                            meta.get('risk_remark') or '',
+                            meta.get('verify_status') or 'unverified',
+                            meta.get('verify_time'),
+                            meta.get('verify_detail') or '',
+                            'pending',
+                            occ.get('created_at') or now,
+                            now
+                        ))
+
+                    if insert_data:
+                        cursor.executemany("""
+                            INSERT INTO risk_page_remediations (
+                                task_id, domain, root_domain, page_url, page_title, source_type,
+                                raw_match, context_snippet, risk_level, risk_tags, risk_remark,
+                                verify_status, last_verified_at, last_verify_detail, manual_status,
+                                created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(task_id, domain, page_url) DO UPDATE SET
+                                risk_level = excluded.risk_level,
+                                risk_tags = excluded.risk_tags,
+                                risk_remark = excluded.risk_remark,
+                                context_snippet = CASE 
+                                    WHEN LENGTH(risk_page_remediations.context_snippet) < 10 THEN excluded.context_snippet 
+                                    ELSE risk_page_remediations.context_snippet 
+                                END,
+                                page_title = CASE 
+                                    WHEN risk_page_remediations.page_title = '' THEN excluded.page_title 
+                                    ELSE risk_page_remediations.page_title 
+                                END,
+                                updated_at = excluded.updated_at
+                        """, insert_data)
+                        return {"synced_count": len(insert_data)}
+        except Exception as e:
+            logger.warning(f"[Dual-Engine] ClickHouse sync_risk_pages_from_occurrences failed: {e}. Falling back to PostgreSQL.")
+
+    # PostgreSQL Fallback
     with db_session() as conn:
         cursor = conn.cursor()
         task_filter = "AND o.task_id = ?" if task_id is not None else ""
