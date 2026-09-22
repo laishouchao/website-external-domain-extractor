@@ -1,8 +1,12 @@
 import json
+import time
+import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from app.db.database import db_session
 from app.crawler.risk_engine import evaluate_domain_risk
+
+logger = logging.getLogger("uvicorn.error")
 
 def now_iso() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -2028,63 +2032,88 @@ def sync_risk_profiles_to_history(domains_filter: Optional[List[str]] = None) ->
             cursor.execute(f"SELECT * FROM domain_risk_profiles WHERE domain IN ({placeholders})", domains_filter)
         else:
             cursor.execute("SELECT * FROM domain_risk_profiles")
-
         profiles = [dict(r) for r in cursor.fetchall()]
-        total_matched = 0
 
-        for p in profiles:
-            dom = p["domain"].lower().strip().lstrip("*.")
-            match_type = p.get("match_type", "root")
-            level = p.get("risk_level", "high")
-            tags = p.get("tags") or "[]"
-            remark = p.get("remark") or f"命中预设风险情报: {dom}"
+    total_matched = 0
 
-            if match_type == "root":
-                where_clause = "(root_domain = ? OR domain = ? OR domain LIKE ?)"
-                if not domains_filter:
-                    where_clause += " AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')"
-                cursor.execute(f"""
-                    UPDATE external_domains
-                    SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
-                    WHERE {where_clause}
-                """, (level, tags, remark, dom, dom, f"%.{dom}"))
-                if level in ('safe', 'pending'):
-                    cursor.execute("""
-                        DELETE FROM risk_page_remediations
-                        WHERE (root_domain = ? OR domain = ? OR domain LIKE ?)
-                    """, (dom, dom, f"%.{dom}"))
-                else:
-                    cursor.execute("""
-                        UPDATE risk_page_remediations
-                        SET risk_level = ?, risk_tags = ?, risk_remark = ?
-                        WHERE (root_domain = ? OR domain = ? OR domain LIKE ?)
-                    """, (level, tags, remark, dom, dom, f"%.{dom}"))
-            else:
-                where_clause = "domain = ?"
-                if not domains_filter:
-                    where_clause += " AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')"
-                cursor.execute(f"""
-                    UPDATE external_domains
-                    SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
-                    WHERE {where_clause}
-                """, (level, tags, remark, dom))
-                if level in ('safe', 'pending'):
-                    cursor.execute("""
-                        DELETE FROM risk_page_remediations
-                        WHERE domain = ?
-                    """, (dom,))
-                else:
-                    cursor.execute("""
-                        UPDATE risk_page_remediations
-                        SET risk_level = ?, risk_tags = ?, risk_remark = ?
-                        WHERE domain = ?
-                    """, (level, tags, remark, dom))
-            total_matched += cursor.rowcount
+    for p in profiles:
+        dom = p["domain"].lower().strip().lstrip("*.")
+        if not dom:
+            continue
+        match_type = p.get("match_type", "root")
+        level = p.get("risk_level", "high")
+        tags = p.get("tags") or "[]"
+        remark = p.get("remark") or f"命中预设风险情报: {dom}"
 
-        if domains_filter and any(p.get("risk_level") in ('critical', 'high', 'medium', 'low') for p in profiles):
+        for attempt in range(3):
+            try:
+                with db_session() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SET lock_timeout = '5s';")
+
+                    # Consistent lock ordering across system:
+                    # 1. Update/delete risk_page_remediations first
+                    if match_type == "root":
+                        if level in ('safe', 'pending'):
+                            cursor.execute("""
+                                DELETE FROM risk_page_remediations
+                                WHERE (root_domain = ? OR domain = ?)
+                            """, (dom, dom))
+                        else:
+                            cursor.execute("""
+                                UPDATE risk_page_remediations
+                                SET risk_level = ?, risk_tags = ?, risk_remark = ?
+                                WHERE (root_domain = ? OR domain = ?)
+                            """, (level, tags, remark, dom, dom))
+
+                        # 2. Update external_domains second
+                        where_clause = "(root_domain = ? OR domain = ?)"
+                        if not domains_filter:
+                            where_clause += " AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')"
+                        cursor.execute(f"""
+                            UPDATE external_domains
+                            SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
+                            WHERE {where_clause}
+                        """, (level, tags, remark, dom, dom))
+                    else:
+                        if level in ('safe', 'pending'):
+                            cursor.execute("""
+                                DELETE FROM risk_page_remediations
+                                WHERE domain = ?
+                            """, (dom,))
+                        else:
+                            cursor.execute("""
+                                UPDATE risk_page_remediations
+                                SET risk_level = ?, risk_tags = ?, risk_remark = ?
+                                WHERE domain = ?
+                            """, (level, tags, remark, dom))
+
+                        where_clause = "domain = ?"
+                        if not domains_filter:
+                            where_clause += " AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')"
+                        cursor.execute(f"""
+                            UPDATE external_domains
+                            SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
+                            WHERE {where_clause}
+                        """, (level, tags, remark, dom))
+
+                    total_matched += cursor.rowcount
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                if ("deadlock" in err_str or "lock timeout" in err_str or "could not obtain lock" in err_str) and attempt < 2:
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                logger.warning(f"Error syncing risk profile for domain {dom}: {e}")
+                break
+
+    if any(p.get("risk_level") in ('critical', 'high', 'medium', 'low') for p in profiles):
+        try:
             sync_risk_pages_from_occurrences()
+        except Exception as e:
+            logger.warning(f"Error syncing risk pages after profile history sync: {e}")
 
-        return {"profile_count": len(profiles), "updated_domains": total_matched}
+    return {"profile_count": len(profiles), "updated_domains": total_matched}
 
 
 # ==================== Risk Page Remediation (风险页面待处置专区) ====================

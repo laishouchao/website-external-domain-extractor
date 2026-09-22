@@ -486,11 +486,13 @@ def init_db_postgresql():
         ("idx_remediation_status", "CREATE INDEX IF NOT EXISTS idx_remediation_status ON risk_page_remediations(verify_status);"),
         ("idx_remediation_level", "CREATE INDEX IF NOT EXISTS idx_remediation_level ON risk_page_remediations(risk_level);"),
         ("idx_remediation_domain", "CREATE INDEX IF NOT EXISTS idx_remediation_domain ON risk_page_remediations(domain);"),
+        ("idx_remediation_root", "CREATE INDEX IF NOT EXISTS idx_remediation_root ON risk_page_remediations(root_domain);"),
         ("idx_remediation_manual", "CREATE INDEX IF NOT EXISTS idx_remediation_manual ON risk_page_remediations(manual_status);"),
         ("idx_extdomains_trgm_domain", "CREATE INDEX IF NOT EXISTS idx_extdomains_trgm_domain ON external_domains USING gin (domain gin_trgm_ops);"),
         ("idx_extdomains_trgm_root", "CREATE INDEX IF NOT EXISTS idx_extdomains_trgm_root ON external_domains USING gin (root_domain gin_trgm_ops);"),
         ("idx_occurrences_trgm_domain", "CREATE INDEX IF NOT EXISTS idx_occurrences_trgm_domain ON domain_occurrences USING gin (domain gin_trgm_ops);"),
         ("idx_risk_profile_trgm_domain", "CREATE INDEX IF NOT EXISTS idx_risk_profile_trgm_domain ON domain_risk_profiles USING gin (domain gin_trgm_ops);"),
+        ("idx_remediation_trgm_domain", "CREATE INDEX IF NOT EXISTS idx_remediation_trgm_domain ON risk_page_remediations USING gin (domain gin_trgm_ops);"),
     ]
 
     for idx_name, ddl in indexes:
