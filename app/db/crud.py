@@ -2164,6 +2164,14 @@ def update_risk_profile(profile_id: int, updates: dict) -> Optional[dict]:
 
 
 def delete_risk_profile(profile_id: int) -> bool:
+    """Delete a risk profile and automatically revert associated domain risk statuses and remediations."""
+    profile = get_risk_profile(profile_id)
+    if not profile:
+        return False
+
+    dom = profile["domain"].lower().strip().lstrip("*.")
+    match_type = profile.get("match_type", "root")
+
     with db_session() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM domain_risk_profiles WHERE id = ?", (profile_id,))
@@ -2171,6 +2179,75 @@ def delete_risk_profile(profile_id: int) -> bool:
 
     if success:
         invalidate_risk_profiles_cache()
+
+        # Re-evaluate whether dom still matches any remaining intelligence rules
+        remaining_profiles = get_all_risk_profiles()
+        fallback_eval = evaluate_domain_risk(dom, dom, remaining_profiles)
+
+        with db_session() as conn:
+            cursor = conn.cursor()
+            if fallback_eval["risk_level"] not in ('critical', 'high', 'medium', 'low'):
+                # 1. Domain is no longer risky: revert external_domains that were set by intel_rule
+                if match_type == "root":
+                    cursor.execute("""
+                        UPDATE external_domains
+                        SET risk_level = 'pending', risk_tags = '[]', risk_remark = '', risk_source = ''
+                        WHERE (root_domain = ? OR domain = ?)
+                          AND (risk_source = 'intel_rule' OR risk_source IS NULL OR risk_source = '')
+                    """, (dom, dom))
+                    cursor.execute("""
+                        DELETE FROM risk_page_remediations
+                        WHERE (root_domain = ? OR domain = ?)
+                          AND (task_id, domain) NOT IN (
+                              SELECT task_id, domain FROM external_domains
+                              WHERE risk_level IN ('critical', 'high', 'medium', 'low')
+                          )
+                    """, (dom, dom))
+                else:
+                    cursor.execute("""
+                        UPDATE external_domains
+                        SET risk_level = 'pending', risk_tags = '[]', risk_remark = '', risk_source = ''
+                        WHERE domain = ?
+                          AND (risk_source = 'intel_rule' OR risk_source IS NULL OR risk_source = '')
+                    """, (dom,))
+                    cursor.execute("""
+                        DELETE FROM risk_page_remediations
+                        WHERE domain = ?
+                          AND (task_id, domain) NOT IN (
+                              SELECT task_id, domain FROM external_domains
+                              WHERE risk_level IN ('critical', 'high', 'medium', 'low')
+                          )
+                    """, (dom,))
+            else:
+                # 2. Domain still matches another active profile: sync to the new profile
+                new_level = fallback_eval["risk_level"]
+                new_tags = json.dumps(fallback_eval.get("risk_tags", []), ensure_ascii=False)
+                new_remark = fallback_eval.get("risk_remark", "")
+                if match_type == "root":
+                    cursor.execute("""
+                        UPDATE external_domains
+                        SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
+                        WHERE (root_domain = ? OR domain = ?)
+                          AND (risk_source = 'intel_rule' OR risk_source IS NULL OR risk_source = '')
+                    """, (new_level, new_tags, new_remark, dom, dom))
+                    cursor.execute("""
+                        UPDATE risk_page_remediations
+                        SET risk_level = ?, risk_tags = ?, risk_remark = ?
+                        WHERE (root_domain = ? OR domain = ?)
+                    """, (new_level, new_tags, new_remark, dom, dom))
+                else:
+                    cursor.execute("""
+                        UPDATE external_domains
+                        SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
+                        WHERE domain = ?
+                          AND (risk_source = 'intel_rule' OR risk_source IS NULL OR risk_source = '')
+                    """, (new_level, new_tags, new_remark, dom))
+                    cursor.execute("""
+                        UPDATE risk_page_remediations
+                        SET risk_level = ?, risk_tags = ?, risk_remark = ?
+                        WHERE domain = ?
+                    """, (new_level, new_tags, new_remark, dom))
+
     return success
 
 
@@ -2313,6 +2390,21 @@ def sync_risk_profiles_to_history(domains_filter: Optional[List[str]] = None) ->
             sync_risk_pages_from_occurrences(domains=target_domains)
         except Exception as e:
             logger.warning(f"Error syncing risk pages after profile history sync: {e}")
+
+    # When full retrospective sync runs, also clean up any orphaned remediations for domains no longer at risk
+    if not domains_filter:
+        try:
+            with db_session() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    DELETE FROM risk_page_remediations
+                    WHERE (task_id, domain) NOT IN (
+                        SELECT task_id, domain FROM external_domains
+                        WHERE risk_level IN ('critical', 'high', 'medium', 'low')
+                    )
+                """)
+        except Exception as e:
+            logger.warning(f"Error cleaning up orphaned risk_page_remediations: {e}")
 
     return {"profile_count": len(profiles), "updated_domains": total_matched}
 
