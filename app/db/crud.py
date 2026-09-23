@@ -2191,22 +2191,24 @@ def delete_risk_profile(profile_id: int) -> bool:
                 if match_type == "root":
                     cursor.execute("""
                         UPDATE external_domains
-                        SET risk_level = 'pending', risk_tags = '[]', risk_remark = '', risk_source = ''
-                        WHERE (root_domain = ? OR domain = ?)
+                        SET risk_level = 'pending', risk_tags = '[]', risk_remark = '', risk_source = '',
+                            verify_status = 'unverified', verify_time = NULL, verify_detail = ''
+                        WHERE (root_domain = ? OR domain = ? OR domain LIKE ?)
                           AND (risk_source = 'intel_rule' OR risk_source IS NULL OR risk_source = '')
-                    """, (dom, dom))
+                    """, (dom, dom, f"%.{dom}"))
                     cursor.execute("""
                         DELETE FROM risk_page_remediations
-                        WHERE (root_domain = ? OR domain = ?)
+                        WHERE (root_domain = ? OR domain = ? OR domain LIKE ?)
                           AND (task_id, domain) NOT IN (
                               SELECT task_id, domain FROM external_domains
                               WHERE risk_level IN ('critical', 'high', 'medium', 'low')
                           )
-                    """, (dom, dom))
+                    """, (dom, dom, f"%.{dom}"))
                 else:
                     cursor.execute("""
                         UPDATE external_domains
-                        SET risk_level = 'pending', risk_tags = '[]', risk_remark = '', risk_source = ''
+                        SET risk_level = 'pending', risk_tags = '[]', risk_remark = '', risk_source = '',
+                            verify_status = 'unverified', verify_time = NULL, verify_detail = ''
                         WHERE domain = ?
                           AND (risk_source = 'intel_rule' OR risk_source IS NULL OR risk_source = '')
                     """, (dom,))
