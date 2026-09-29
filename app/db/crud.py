@@ -1428,17 +1428,6 @@ def list_global_external_domains(
             where_clauses.append("ed.has_text = ?")
             params.append(has_text)
 
-        if risk_level:
-            if risk_level == 'risk_only':
-                where_clauses.append("ed.risk_level IN ('critical', 'high', 'medium')")
-            else:
-                where_clauses.append("ed.risk_level = ?")
-                params.append(risk_level)
-
-        if verify_status:
-            where_clauses.append("ed.verify_status = ?")
-            params.append(verify_status)
-
         where_sql = " AND ".join(where_clauses)
 
         having_clauses = []
@@ -1446,6 +1435,56 @@ def list_global_external_domains(
         if min_tasks and min_tasks > 1:
             having_clauses.append("COUNT(DISTINCT ed.task_id) >= ?")
             having_params.append(min_tasks)
+
+        # Unified global risk aggregation based on security severity:
+        # critical > high > medium > low > safe > pending
+        risk_case_sql = """
+            CASE
+                WHEN bool_or(ed.risk_level = 'critical') THEN 'critical'
+                WHEN bool_or(ed.risk_level = 'high') THEN 'high'
+                WHEN bool_or(ed.risk_level = 'medium') THEN 'medium'
+                WHEN bool_or(ed.risk_level = 'low') THEN 'low'
+                WHEN bool_or(ed.risk_level = 'safe') THEN 'safe'
+                ELSE 'pending'
+            END
+        """
+
+        # Unified global verify status aggregation:
+        # verified_failed > verified_clean > error > unverified
+        verify_case_sql = """
+            CASE
+                WHEN bool_or(ed.verify_status = 'verified_failed') THEN 'verified_failed'
+                WHEN bool_or(ed.verify_status = 'verified_clean') THEN 'verified_clean'
+                WHEN bool_or(ed.verify_status = 'error') THEN 'error'
+                ELSE 'unverified'
+            END
+        """
+
+        if risk_level:
+            if risk_level == 'risk_only':
+                having_clauses.append("bool_or(ed.risk_level IN ('critical', 'high', 'medium'))")
+            elif risk_level == 'safe':
+                having_clauses.append("(bool_or(ed.risk_level = 'safe') AND NOT bool_or(ed.risk_level IN ('critical', 'high', 'medium', 'low')))")
+            elif risk_level == 'pending':
+                having_clauses.append("NOT bool_or(ed.risk_level IN ('critical', 'high', 'medium', 'low', 'safe'))")
+            elif risk_level == 'critical':
+                having_clauses.append("bool_or(ed.risk_level = 'critical')")
+            elif risk_level == 'high':
+                having_clauses.append("(bool_or(ed.risk_level = 'high') AND NOT bool_or(ed.risk_level = 'critical'))")
+            elif risk_level == 'medium':
+                having_clauses.append("(bool_or(ed.risk_level = 'medium') AND NOT bool_or(ed.risk_level IN ('critical', 'high')))")
+            elif risk_level == 'low':
+                having_clauses.append("(bool_or(ed.risk_level = 'low') AND NOT bool_or(ed.risk_level IN ('critical', 'high', 'medium')))")
+
+        if verify_status:
+            if verify_status == 'verified_failed':
+                having_clauses.append("bool_or(ed.verify_status = 'verified_failed')")
+            elif verify_status == 'verified_clean':
+                having_clauses.append("(bool_or(ed.verify_status = 'verified_clean') AND NOT bool_or(ed.verify_status = 'verified_failed'))")
+            elif verify_status == 'error':
+                having_clauses.append("(bool_or(ed.verify_status = 'error') AND NOT bool_or(ed.verify_status IN ('verified_clean', 'verified_failed')))")
+            elif verify_status == 'unverified':
+                having_clauses.append("NOT bool_or(ed.verify_status IN ('verified_clean', 'verified_failed', 'error'))")
 
         having_sql = f" HAVING {' AND '.join(having_clauses)}" if having_clauses else ""
 
@@ -1456,7 +1495,7 @@ def list_global_external_domains(
                 FROM external_domains ed
                 JOIN tasks t ON ed.task_id = t.id
                 WHERE {where_sql}
-                GROUP BY ed.domain
+                GROUP BY ed.domain, ed.root_domain
                 {having_sql}
             ) as sub_cnt
         """
@@ -1490,10 +1529,10 @@ def list_global_external_domains(
                 MIN(ed.created_at) as first_seen_at,
                 MAX(ed.created_at) as last_seen_at,
                 MIN(ed.sample_page_url) as sample_page_url,
-                MAX(ed.risk_level) as risk_level,
+                {risk_case_sql} as risk_level,
                 MAX(ed.risk_tags) as risk_tags_raw,
                 MAX(ed.risk_remark) as risk_remark,
-                MAX(ed.verify_status) as verify_status,
+                {verify_case_sql} as verify_status,
                 MAX(ed.verify_time) as verify_time,
                 {tasks_agg} as tasks_summary_raw
             FROM external_domains ed
@@ -1575,10 +1614,23 @@ def get_global_domains_stats() -> dict:
         """)
         shared_domains_count = cursor.fetchone()[0]
 
-        # Risk breakdown stats across global domains
+        # Risk breakdown stats across global domains (strictly unified aggregation without overlap)
         cursor.execute("""
-            SELECT risk_level, COUNT(DISTINCT domain) as cnt
-            FROM external_domains
+            SELECT risk_level, COUNT(*) as cnt
+            FROM (
+                SELECT 
+                    domain,
+                    CASE
+                        WHEN bool_or(risk_level = 'critical') THEN 'critical'
+                        WHEN bool_or(risk_level = 'high') THEN 'high'
+                        WHEN bool_or(risk_level = 'medium') THEN 'medium'
+                        WHEN bool_or(risk_level = 'low') THEN 'low'
+                        WHEN bool_or(risk_level = 'safe') THEN 'safe'
+                        ELSE 'pending'
+                    END as risk_level
+                FROM external_domains
+                GROUP BY domain
+            ) as sub
             GROUP BY risk_level
         """)
         risk_map = {r['risk_level']: r['cnt'] for r in cursor.fetchall()}
@@ -1592,10 +1644,21 @@ def get_global_domains_stats() -> dict:
             "total_risk": risk_map.get("critical", 0) + risk_map.get("high", 0) + risk_map.get("medium", 0)
         }
 
-        # Verification stats
+        # Verification stats (strictly unified aggregation without overlap)
         cursor.execute("""
-            SELECT verify_status, COUNT(DISTINCT domain) as cnt
-            FROM external_domains
+            SELECT verify_status, COUNT(*) as cnt
+            FROM (
+                SELECT 
+                    domain,
+                    CASE
+                        WHEN bool_or(verify_status = 'verified_failed') THEN 'verified_failed'
+                        WHEN bool_or(verify_status = 'verified_clean') THEN 'verified_clean'
+                        WHEN bool_or(verify_status = 'error') THEN 'error'
+                        ELSE 'unverified'
+                    END as verify_status
+                FROM external_domains
+                GROUP BY domain
+            ) as sub
             GROUP BY verify_status
         """)
         verify_map = {r['verify_status']: r['cnt'] for r in cursor.fetchall()}
@@ -2336,24 +2399,24 @@ def sync_risk_profiles_to_history(domains_filter: Optional[List[str]] = None) ->
                         if level in ('safe', 'pending'):
                             cursor.execute("""
                                 DELETE FROM risk_page_remediations
-                                WHERE (root_domain = ? OR domain = ?)
-                            """, (dom, dom))
+                                WHERE (root_domain = ? OR domain = ? OR domain LIKE ?)
+                            """, (dom, dom, f"%.{dom}"))
                         else:
                             cursor.execute("""
                                 UPDATE risk_page_remediations
                                 SET risk_level = ?, risk_tags = ?, risk_remark = ?
-                                WHERE (root_domain = ? OR domain = ?)
-                            """, (level, tags, remark, dom, dom))
+                                WHERE (root_domain = ? OR domain = ? OR domain LIKE ?)
+                            """, (level, tags, remark, dom, dom, f"%.{dom}"))
 
                         # 2. Update external_domains second
-                        where_clause = "(root_domain = ? OR domain = ?)"
+                        where_clause = "(root_domain = ? OR domain = ? OR domain LIKE ?)"
                         if not domains_filter:
                             where_clause += " AND (risk_source != 'manual' OR risk_source IS NULL OR risk_source = '')"
                         cursor.execute(f"""
                             UPDATE external_domains
                             SET risk_level = ?, risk_tags = ?, risk_remark = ?, risk_source = 'intel_rule'
                             WHERE {where_clause}
-                        """, (level, tags, remark, dom, dom))
+                        """, (level, tags, remark, dom, dom, f"%.{dom}"))
                     else:
                         if level in ('safe', 'pending'):
                             cursor.execute("""
@@ -2393,16 +2456,18 @@ def sync_risk_profiles_to_history(domains_filter: Optional[List[str]] = None) ->
         except Exception as e:
             logger.warning(f"Error syncing risk pages after profile history sync: {e}")
 
-    # When full retrospective sync runs, also clean up any orphaned remediations for domains no longer at risk
+    # When full retrospective sync runs, also clean up any orphaned remediations for domains no longer at risk (optimized with NOT EXISTS)
     if not domains_filter:
         try:
             with db_session() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    DELETE FROM risk_page_remediations
-                    WHERE (task_id, domain) NOT IN (
-                        SELECT task_id, domain FROM external_domains
-                        WHERE risk_level IN ('critical', 'high', 'medium', 'low')
+                    DELETE FROM risk_page_remediations rpr
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM external_domains ed
+                        WHERE ed.task_id = rpr.task_id
+                          AND ed.domain = rpr.domain
+                          AND ed.risk_level IN ('critical', 'high', 'medium', 'low')
                     )
                 """)
         except Exception as e:
