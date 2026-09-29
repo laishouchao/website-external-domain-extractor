@@ -41,21 +41,21 @@
       />
       <MetricCard
         title="全网引用频次"
-        :value="store.stats.total_domain_occurrences || 0"
+        :value="store.stats.total_domain_occurrences ?? store.stats.total_occurrences ?? 0"
         subtitle="跨页面代码被引用总次数"
         icon="Layers"
         color="cyan"
       />
       <MetricCard
         title="关联分析任务"
-        :value="store.stats.active_tasks_count || 0"
+        :value="store.stats.active_tasks_count ?? store.stats.total_tasks ?? 0"
         subtitle="贡献域名数据的扫描任务"
         icon="Briefcase"
         color="amber"
       />
       <MetricCard
         title="涉险违规域名"
-        :value="store.stats.risk_domains_count || 0"
+        :value="store.stats.risk_domains_count ?? store.stats.risk_stats?.total_risk ?? 0"
         subtitle="中高危及严重风险级别"
         icon="ShieldAlert"
         color="rose"

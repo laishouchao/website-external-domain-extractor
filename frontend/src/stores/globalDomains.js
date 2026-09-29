@@ -61,7 +61,16 @@ export const useGlobalDomainsStore = defineStore('globalDomains', () => {
   const loadStats = async () => {
     try {
       const res = await client.get('/global-domains/stats')
-      stats.value = res || {}
+      const data = res || {}
+      stats.value = {
+        total_unique_domains: data.total_unique_domains || 0,
+        total_domain_occurrences: data.total_domain_occurrences ?? data.total_occurrences ?? 0,
+        total_occurrences: data.total_occurrences ?? data.total_domain_occurrences ?? 0,
+        active_tasks_count: data.active_tasks_count ?? data.total_tasks ?? 0,
+        total_tasks: data.total_tasks ?? data.active_tasks_count ?? 0,
+        risk_domains_count: data.risk_domains_count ?? data.risk_stats?.total_risk ?? 0,
+        ...data
+      }
     } catch (e) {
       console.error('Failed to load global domain stats:', e)
     }
