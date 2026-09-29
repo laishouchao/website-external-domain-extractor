@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -9,6 +9,7 @@ import asyncio
 from app.db.database import init_db
 from app.db.clickhouse import init_clickhouse
 from app.db import crud
+from app.api.auth import router as auth_router, get_current_user
 from app.api.tasks import router as tasks_router
 from app.api.sitemap import router as sitemap_router
 from app.api.domains import router as domains_router
@@ -53,14 +54,15 @@ app.add_middleware(
 )
 
 # Include API Routers
-app.include_router(tasks_router)
-app.include_router(sitemap_router)
-app.include_router(domains_router)
-app.include_router(subdomains_router)
-app.include_router(global_domains_router)
-app.include_router(risk_profiles_router)
-app.include_router(risk_remediation_router)
-app.include_router(events_router)
+app.include_router(auth_router)
+app.include_router(tasks_router, dependencies=[Depends(get_current_user)])
+app.include_router(sitemap_router, dependencies=[Depends(get_current_user)])
+app.include_router(domains_router, dependencies=[Depends(get_current_user)])
+app.include_router(subdomains_router, dependencies=[Depends(get_current_user)])
+app.include_router(global_domains_router, dependencies=[Depends(get_current_user)])
+app.include_router(risk_profiles_router, dependencies=[Depends(get_current_user)])
+app.include_router(risk_remediation_router, dependencies=[Depends(get_current_user)])
+app.include_router(events_router, dependencies=[Depends(get_current_user)])
 
 # Static files directory
 STATIC_DIR = Path(__file__).resolve().parent / "static"

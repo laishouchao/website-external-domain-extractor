@@ -3,6 +3,7 @@ import queue
 import threading
 import logging
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Optional, Any, List, Dict
 from app.config import (
     PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE, PG_POOL_SIZE
@@ -449,6 +450,19 @@ def init_db_postgresql():
             UNIQUE(task_id, domain, page_url)
         );
         """),
+        ("users", """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            nickname TEXT DEFAULT '',
+            role TEXT NOT NULL DEFAULT 'admin',
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_login_at TEXT DEFAULT NULL
+        );
+        """),
     ]
 
     for tbl_name, ddl in tables:
@@ -465,6 +479,7 @@ def init_db_postgresql():
 
     # Indexes to create if missing
     indexes = [
+        ("idx_users_username", "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);"),
         ("idx_sitemap_task", "CREATE INDEX IF NOT EXISTS idx_sitemap_task ON sitemap_pages(task_id);"),
         ("idx_extdomains_task", "CREATE INDEX IF NOT EXISTS idx_extdomains_task ON external_domains(task_id);"),
         ("idx_extdomains_domain", "CREATE INDEX IF NOT EXISTS idx_extdomains_domain ON external_domains(task_id, domain);"),
@@ -507,3 +522,30 @@ def init_db_postgresql():
                 logger.info(f"Created missing index: {idx_name}")
             except Exception as e:
                 logger.warning(f"Could not create index {idx_name} (skipped to prevent block): {e}")
+
+    # Ensure default admin user is initialized
+    init_default_admin_user()
+
+
+def init_default_admin_user():
+    """Ensure default administrator user exists on system initialization."""
+    from app.config import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NICKNAME
+    from app.core.security import hash_password
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with db_session() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users;")
+            row = cursor.fetchone()
+            count = row[0] if row else 0
+            if count == 0:
+                pwd_hash = hash_password(DEFAULT_ADMIN_PASSWORD)
+                cursor.execute("""
+                    INSERT INTO users (username, password_hash, nickname, role, is_active, created_at, updated_at)
+                    VALUES (?, ?, ?, 'admin', TRUE, ?, ?)
+                    ON CONFLICT(username) DO NOTHING;
+                """, (DEFAULT_ADMIN_USERNAME, pwd_hash, DEFAULT_ADMIN_NICKNAME, now, now))
+                logger.info(f"Initialized default administrator account: {DEFAULT_ADMIN_USERNAME}")
+    except Exception as e:
+        logger.error(f"Error initializing default administrator account: {e}")
+

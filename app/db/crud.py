@@ -3084,3 +3084,121 @@ def get_risk_remediations_for_export(
         return [dict(r) for r in cursor.fetchall()]
 
 
+# ==================== User & Authentication CRUD ====================
+
+def get_user_by_username(username: str) -> Optional[dict]:
+    """Retrieve user record by username."""
+    if not username:
+        return None
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username.strip(),))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> Optional[dict]:
+    """Retrieve user record by user ID."""
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def create_user(
+    username: str,
+    password_hash: str,
+    nickname: str = "",
+    role: str = "admin",
+    is_active: bool = True
+) -> Optional[dict]:
+    """Create a new user account."""
+    now = now_iso()
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO users (username, password_hash, nickname, role, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            RETURNING id;
+        """, (username.strip(), password_hash, nickname.strip(), role, is_active, now, now))
+        row = cursor.fetchone()
+        uid = row[0] if row else cursor.lastrowid
+    return get_user_by_id(uid)
+
+
+def update_user_password(user_id: int, new_password_hash: str) -> bool:
+    """Update user's password hash."""
+    now = now_iso()
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users
+            SET password_hash = ?, updated_at = ?
+            WHERE id = ?;
+        """, (new_password_hash, now, user_id))
+        return cursor.rowcount > 0
+
+
+def update_user_profile(user_id: int, updates: dict) -> Optional[dict]:
+    """Update user profile fields (nickname, role, is_active)."""
+    now = now_iso()
+    fields = []
+    params = []
+    for k in ["nickname", "role", "is_active"]:
+        if k in updates:
+            fields.append(f"{k} = ?")
+            params.append(updates[k])
+    if not fields:
+        return get_user_by_id(user_id)
+    fields.append("updated_at = ?")
+    params.append(now)
+    params.append(user_id)
+
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = ?", params)
+    return get_user_by_id(user_id)
+
+
+def update_user_last_login(user_id: int) -> bool:
+    """Update last login timestamp for user."""
+    now = now_iso()
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users
+            SET last_login_at = ?
+            WHERE id = ?;
+        """, (now, user_id))
+        return cursor.rowcount > 0
+
+
+def list_users() -> List[dict]:
+    """List all users without password hashes."""
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, username, nickname, role, is_active, created_at, updated_at, last_login_at
+            FROM users
+            ORDER BY id ASC;
+        """)
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def delete_user(user_id: int) -> bool:
+    """Delete a user account (cannot delete the last admin)."""
+    with db_session() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = TRUE;")
+        admin_count = cursor.fetchone()[0]
+        cursor.execute("SELECT role FROM users WHERE id = ?;", (user_id,))
+        user_row = cursor.fetchone()
+        if not user_row:
+            return False
+        if user_row["role"] == "admin" and admin_count <= 1:
+            raise ValueError("系统至少需要保留一个激活的超级管理员账号，无法删除")
+        cursor.execute("DELETE FROM users WHERE id = ?;", (user_id,))
+        return cursor.rowcount > 0
+
+

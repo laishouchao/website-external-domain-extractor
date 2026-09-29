@@ -1,15 +1,18 @@
 <template>
-  <AppLayout>
+  <component :is="route.meta.layout === 'blank' ? 'div' : AppLayout">
     <router-view v-slot="{ Component }">
       <transition name="fade" mode="out-in">
         <component :is="Component" />
       </transition>
     </router-view>
-  </AppLayout>
+  </component>
 </template>
 
 <script setup>
+import { useRoute } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
+
+const route = useRoute()
 </script>
 
 <style>

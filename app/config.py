@@ -79,3 +79,13 @@ DEFAULT_CRAWLER_CONFIG = {
     "scan_asset_content": _bool_env("CRAWLER_SCAN_ASSET_CONTENT", True),
     "max_asset_size_kb": int(os.getenv("CRAWLER_MAX_ASSET_SIZE_KB", 3072)),
 }
+
+# ==============================================================================
+# Authentication & JWT Security Configuration
+# ==============================================================================
+SECRET_KEY = os.getenv("SECRET_KEY", "website-external-domain-extractor-jwt-secret-key-2026")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60 * 24 * 7))  # Default 7 days
+DEFAULT_ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+DEFAULT_ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+DEFAULT_ADMIN_NICKNAME = os.getenv("ADMIN_NICKNAME", "系统管理员")

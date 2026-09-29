@@ -192,13 +192,181 @@
           </div>
         </div>
       </div>
+
+      <!-- Account & Auth Security Card -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4 md:col-span-2">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            <UserCheck class="w-4 h-4 text-sky-400" />
+            用户鉴权与账号安全
+          </h3>
+          <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+            当前会话已认证
+          </span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+          <div class="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-1">
+            <span class="text-slate-500">当前账号</span>
+            <div class="font-mono text-sm font-semibold text-slate-200">{{ authStore.user?.username || 'admin' }}</div>
+          </div>
+
+          <div class="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-1">
+            <span class="text-slate-500">用户昵称 / 角色</span>
+            <div class="text-sm font-semibold text-slate-200">{{ authStore.userDisplayName }} ({{ authStore.user?.role === 'admin' ? '超级管理员' : '操作员' }})</div>
+          </div>
+
+          <div class="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl space-y-1">
+            <span class="text-slate-500">加密算法与令牌</span>
+            <div class="font-mono text-sm font-semibold text-indigo-400">JWT (HS256) + Bcrypt</div>
+          </div>
+
+          <div class="p-3.5 bg-slate-950/60 border border-slate-800 rounded-xl flex items-center justify-between">
+            <div class="space-y-1">
+              <span class="text-slate-500">密码安全</span>
+              <div class="text-xs text-slate-300">已设置加密哈希</div>
+            </div>
+            <button
+              @click="openChangePwdModal"
+              class="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <KeyRound class="w-3.5 h-3.5" />
+              <span>修改密码</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
+
+    <!-- Password Modal -->
+    <Modal
+      :model-value="changePwdModalOpen"
+      title="修改管理员密码"
+      size="md"
+      @update:model-value="changePwdModalOpen = $event"
+    >
+      <form @submit.prevent="submitChangePwd" class="space-y-4">
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-slate-300">当前旧密码</label>
+          <input
+            v-model="pwdForm.oldPassword"
+            type="password"
+            required
+            placeholder="请输入当前旧密码"
+            class="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-slate-300">新密码（至少6位）</label>
+          <input
+            v-model="pwdForm.newPassword"
+            type="password"
+            required
+            minlength="6"
+            placeholder="请输入新密码"
+            class="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+
+        <div class="space-y-1.5">
+          <label class="block text-xs font-medium text-slate-300">确认新密码</label>
+          <input
+            v-model="pwdForm.confirmPassword"
+            type="password"
+            required
+            minlength="6"
+            placeholder="请再次输入新密码"
+            class="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+
+        <div v-if="pwdError" class="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
+          {{ pwdError }}
+        </div>
+
+        <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+          <button
+            type="button"
+            @click="changePwdModalOpen = false"
+            class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer"
+          >
+            取消
+          </button>
+          <button
+            type="submit"
+            :disabled="isSubmitting"
+            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+          >
+            <Loader2 v-if="isSubmitting" class="w-3.5 h-3.5 animate-spin" />
+            <span>确认修改</span>
+          </button>
+        </div>
+      </form>
+    </Modal>
   </div>
 </template>
 
 <script setup>
-import { Settings, Database, Cpu, Clock, ShieldCheck, Palette, Sun, Moon } from 'lucide-vue-next'
+import { ref, reactive } from 'vue'
+import {
+  Settings,
+  Database,
+  Cpu,
+  Clock,
+  ShieldCheck,
+  Palette,
+  Sun,
+  Moon,
+  UserCheck,
+  KeyRound,
+  Loader2
+} from 'lucide-vue-next'
 import { useUiStore } from '@/stores/ui'
+import { useAuthStore } from '@/stores/auth'
+import Modal from '@/components/common/Modal.vue'
 
 const ui = useUiStore()
+const authStore = useAuthStore()
+
+const changePwdModalOpen = ref(false)
+const isSubmitting = ref(false)
+const pwdError = ref('')
+const pwdForm = reactive({
+  oldPassword: '',
+  newPassword: '',
+  confirmPassword: ''
+})
+
+const openChangePwdModal = () => {
+  pwdForm.oldPassword = ''
+  pwdForm.newPassword = ''
+  pwdForm.confirmPassword = ''
+  pwdError.value = ''
+  changePwdModalOpen.value = true
+}
+
+const submitChangePwd = async () => {
+  pwdError.value = ''
+  if (pwdForm.newPassword !== pwdForm.confirmPassword) {
+    pwdError.value = '两次输入的新密码不一致'
+    return
+  }
+  if (pwdForm.newPassword.length < 6) {
+    pwdError.value = '新密码长度至少需要6位'
+    return
+  }
+
+  isSubmitting.value = true
+  try {
+    await authStore.changePassword(pwdForm.oldPassword, pwdForm.newPassword)
+    ui.showToast('密码修改成功！', 'success')
+    changePwdModalOpen.value = false
+  } catch (err) {
+    pwdError.value = err.message || '密码修改失败，请检查旧密码'
+  } finally {
+    isSubmitting.value = false
+  }
+}
 </script>

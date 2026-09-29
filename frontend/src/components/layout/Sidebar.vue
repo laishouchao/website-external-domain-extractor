@@ -70,8 +70,18 @@
       >
         <ChevronRight class="w-4 h-4" />
       </button>
-      <div v-else class="text-[11px] text-slate-500 text-center truncate">
-        系统状态: <span class="text-emerald-400 font-semibold">在线运行</span>
+      <div v-else class="w-full flex items-center justify-between text-xs text-slate-400 px-1">
+        <div class="flex items-center gap-2 truncate">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+          <span class="truncate font-medium text-slate-300 text-[11px]">{{ authStore.userDisplayName }}</span>
+        </div>
+        <button
+          @click="handleLogout"
+          class="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition cursor-pointer"
+          title="退出登录"
+        >
+          <LogOut class="w-3.5 h-3.5" />
+        </button>
       </div>
     </div>
   </aside>
@@ -79,6 +89,7 @@
 
 <script setup>
 import { computed, markRaw } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   LayoutDashboard,
   ListTodo,
@@ -87,15 +98,26 @@ import {
   FileCode,
   Settings,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  LogOut
 } from 'lucide-vue-next'
 import { useUiStore } from '@/stores/ui'
 import { useRemediationStore } from '@/stores/remediation'
 import { useGlobalDomainsStore } from '@/stores/globalDomains'
+import { useAuthStore } from '@/stores/auth'
 
+const router = useRouter()
 const ui = useUiStore()
 const remediation = useRemediationStore()
 const globalDomains = useGlobalDomainsStore()
+const authStore = useAuthStore()
+
+const handleLogout = async () => {
+  if (confirm('确认退出系统？')) {
+    await authStore.logout()
+    router.replace('/login')
+  }
+}
 
 const navItems = computed(() => [
   {
