@@ -1,0 +1,4 @@
+# 待巡检的示例 URL 列表 (支持以 # 开头的注释行)
+https://example.com
+https://httpbin.org/html
+https://example.org

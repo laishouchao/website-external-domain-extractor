@@ -83,6 +83,7 @@ logs/
 tmp/
 temp/
 *.png
+web_compliance_checker/output/
 
 # ==========================================
 # Operating System Files

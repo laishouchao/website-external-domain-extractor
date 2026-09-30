@@ -454,9 +454,30 @@ const initForm = (item) => {
     }
   }
 
+  // Strip one level from domain (e.g. hda.testiu.com -> testiu.com)
+  const isEditingExistingRule = Boolean(item.match_type && !item.root_domain)
+  const initialMatchType = item.match_type || 'root'
+  let initialTargetDomain = ''
+
+  if (isEditingExistingRule) {
+    initialTargetDomain = item.domain || ''
+  } else {
+    if (initialMatchType === 'root') {
+      initialTargetDomain = getStrippedDomain(item.domain, item.root_domain)
+    } else {
+      initialTargetDomain = item.domain || ''
+    }
+  }
+
+  if (initialTargetDomain.startsWith('*.')) {
+    initialTargetDomain = initialTargetDomain.substring(2)
+  } else if (initialTargetDomain.startsWith('.')) {
+    initialTargetDomain = initialTargetDomain.substring(1)
+  }
+
   assessForm.value = {
-    match_type: item.match_type || (item.root_domain ? 'root' : 'exact'),
-    target_domain: item.domain || item.root_domain || '',
+    match_type: initialMatchType,
+    target_domain: initialTargetDomain,
     risk_level: item.risk_level && item.risk_level !== 'pending' ? item.risk_level : 'high',
     tags: parsedTags,
     remark: item.risk_remark || item.remark || '',
@@ -464,6 +485,29 @@ const initForm = (item) => {
   }
   customTagInput.value = ''
   activeTagCategory.value = 'all'
+}
+
+// Strip one level from domain (e.g. hda.testiu.com -> testiu.com)
+const getStrippedDomain = (domain, rootDomain) => {
+  if (!domain && !rootDomain) return ''
+  let d = (domain || rootDomain || '').trim()
+  if (d.startsWith('*.')) d = d.substring(2)
+  else if (d.startsWith('.')) d = d.substring(1)
+
+  const parts = d.split('.').filter(Boolean)
+  if (parts.length > 2) {
+    const stripped = parts.slice(1).join('.')
+    if (rootDomain) {
+      let r = rootDomain.trim()
+      if (r.startsWith('*.')) r = r.substring(2)
+      else if (r.startsWith('.')) r = r.substring(1)
+      if (stripped.length < r.length) {
+        return r
+      }
+    }
+    return stripped
+  }
+  return rootDomain || d
 }
 
 watch(
@@ -487,7 +531,7 @@ watch(
 const onMatchTypeChange = () => {
   if (props.item) {
     if (assessForm.value.match_type === 'root') {
-      assessForm.value.target_domain = props.item.root_domain || props.item.domain || ''
+      assessForm.value.target_domain = getStrippedDomain(props.item.domain, props.item.root_domain)
     } else {
       assessForm.value.target_domain = props.item.domain || ''
     }

@@ -2549,8 +2549,8 @@
                                     <input type="radio" value="root" v-model="globalAssessForm.rule_type" @change="onGlobalAssessTypeChange" class="text-purple-500">
                                     <span>🌐 主根域名通配</span>
                                 </div>
-                                <div class="text-[11px] text-purple-300 font-mono pl-5 truncate" :title="`*.${globalAssessTarget?.root_domain || globalAssessTarget?.domain}`">
-                                    *.{{ globalAssessTarget?.root_domain || globalAssessTarget?.domain }}
+                                <div class="text-[11px] text-purple-300 font-mono pl-5 truncate" :title="`*.${getStrippedDomain(globalAssessTarget?.domain, globalAssessTarget?.root_domain)}`">
+                                    *.{{ getStrippedDomain(globalAssessTarget?.domain, globalAssessTarget?.root_domain) }}
                                 </div>
                                 <div class="text-[10px] text-slate-500 pl-5">通配匹配该主域及所有层级子域名</div>
                             </label>

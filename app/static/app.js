@@ -1434,11 +1434,34 @@ const app = createApp({
             }
         };
 
+        // Strip one level from domain (e.g. hda.testiu.com -> testiu.com)
+        const getStrippedDomain = (domain, rootDomain) => {
+            if (!domain && !rootDomain) return '';
+            let d = (domain || rootDomain || '').trim();
+            if (d.startsWith('*.')) d = d.substring(2);
+            else if (d.startsWith('.')) d = d.substring(1);
+
+            const parts = d.split('.').filter(Boolean);
+            if (parts.length > 2) {
+                const stripped = parts.slice(1).join('.');
+                if (rootDomain) {
+                    let r = rootDomain.trim();
+                    if (r.startsWith('*.')) r = r.substring(2);
+                    else if (r.startsWith('.')) r = r.substring(1);
+                    if (stripped.length < r.length) {
+                        return r;
+                    }
+                }
+                return stripped;
+            }
+            return rootDomain || d;
+        };
+
         // Global Domain Assessment & Rule Creation
         const openGlobalAssessModal = (domainItem) => {
             if (!domainItem) return;
             globalAssessTarget.value = domainItem;
-            const defaultTarget = domainItem.root_domain || domainItem.domain;
+            const defaultTarget = getStrippedDomain(domainItem.domain, domainItem.root_domain);
             globalAssessForm.value = {
                 rule_type: 'root',
                 target_domain: defaultTarget,
@@ -1454,9 +1477,9 @@ const app = createApp({
         const onGlobalAssessTypeChange = () => {
             if (!globalAssessTarget.value) return;
             if (globalAssessForm.value.rule_type === 'root') {
-                globalAssessForm.value.target_domain = globalAssessTarget.value.root_domain || globalAssessTarget.value.domain;
+                globalAssessForm.value.target_domain = getStrippedDomain(globalAssessTarget.value.domain, globalAssessTarget.value.root_domain);
             } else {
-                globalAssessForm.value.target_domain = globalAssessTarget.value.domain;
+                globalAssessForm.value.target_domain = globalAssessTarget.value.domain || '';
             }
         };
 
@@ -2047,6 +2070,7 @@ const app = createApp({
             savingGlobalAssess,
             globalAssessForm,
             openGlobalAssessModal,
+            getStrippedDomain,
             onGlobalAssessTypeChange,
             toggleGlobalAssessTag,
             addGlobalAssessCustomTag,

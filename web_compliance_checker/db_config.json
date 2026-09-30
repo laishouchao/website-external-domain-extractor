@@ -1,0 +1,32 @@
+{
+  "postgres": {
+    "enabled": true,
+    "host": "localhost",
+    "port": 5432,
+    "user": "postgres",
+    "password": "",
+    "database": "website_domain_db",
+    "task_table": "external_domains",
+    "audit_table": "compliance_audit_logs"
+  },
+  "clickhouse": {
+    "enabled": true,
+    "host": "localhost",
+    "port": 8123,
+    "user": "default",
+    "password": "",
+    "database": "website_domain_db",
+    "task_table": "external_domains",
+    "audit_table": "compliance_audit_events"
+  },
+  "default_source": "postgres",
+  "default_sink": "both",
+  "batch_size": 50,
+  "poll_interval_seconds": 10,
+  "target_field": "domain",
+  "filters": {
+    "task_id": null,
+    "risk_level": "pending",
+    "verify_status": "unverified"
+  }
+}
