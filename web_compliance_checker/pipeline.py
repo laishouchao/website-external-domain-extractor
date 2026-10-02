@@ -82,12 +82,18 @@ def aggregate_device_results(url: str, device_inspections: List[Dict[str, Any]])
     if not has_violation:
         primary_category = "normal"
 
+    has_cross_domain = any(d.get("is_cross_domain_redirect") for d in device_inspections)
+    redirect_notes_list = [d.get("redirect_notes") for d in device_inspections if d.get("redirect_notes")]
+    cross_domain_notes = "; ".join(dict.fromkeys(redirect_notes_list)) if redirect_notes_list else ""
+
     return {
         "is_violation": has_violation,
         "overall_risk_level": highest_risk,
         "primary_violation_category": primary_category,
         "cloaking_suspected": cloaking_detected,
         "cloaking_notes": cloaking_notes,
+        "cross_domain_redirect": has_cross_domain,
+        "redirect_notes": cross_domain_notes,
         "category_probabilities": {
             k: {
                 "name": v["name_cn"],
@@ -325,6 +331,9 @@ class DecoupledInspectionPipeline:
             "user_agent": profile.get("user_agent"),
             "final_url": capture.get("final_url"),
             "http_status": capture.get("http_status"),
+            "redirect_hops": capture.get("redirect_hops", []),
+            "is_cross_domain_redirect": capture.get("is_cross_domain_redirect", False),
+            "redirect_notes": capture.get("redirect_notes", ""),
             "capture_status": capture.get("status"),
             "error": capture.get("error")
         }

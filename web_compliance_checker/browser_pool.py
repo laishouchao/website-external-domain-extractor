@@ -8,6 +8,8 @@ from typing import Dict, Any, Optional
 from contextlib import asynccontextmanager
 from playwright.async_api import async_playwright, Playwright, Browser, BrowserContext, Page
 
+from stealth_utils import apply_stealth_to_context
+
 try:
     from playwright_stealth import stealth_async
     STEALTH_AVAILABLE = True
@@ -109,6 +111,7 @@ class AsyncBrowserPool:
             }
 
             context: BrowserContext = await self._browser.new_context(**context_kwargs)
+            await apply_stealth_to_context(context, profile)
             page: Page = await context.new_page()
 
             if STEALTH_AVAILABLE:

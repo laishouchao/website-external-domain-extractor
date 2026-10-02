@@ -187,6 +187,9 @@ class AsyncScreenshotEngine:
             "initial_url": url,
             "final_url": None,
             "http_status": None,
+            "redirect_hops": [],
+            "is_cross_domain_redirect": False,
+            "redirect_notes": "",
             "slices": [],
             "captured_at": None,
             "error": None
@@ -198,18 +201,48 @@ class AsyncScreenshotEngine:
         for attempt in range(1, max_retries + 1):
             try:
                 async with self.browser_pool.acquire_context(profile) as page:
-                    # 导航
+                    # 导航并捕获 HTTP 级别重定向链
                     try:
                         response = await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
                     except PlaywrightError:
                         response = await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
 
-                    result["final_url"] = page.url
+                    # 收集 HTTP 301/302 重定向跃点
+                    redirect_hops = []
+                    if response and response.request:
+                        curr_req = response.request
+                        while curr_req and curr_req.redirected_from:
+                            prev_req = curr_req.redirected_from
+                            redirect_hops.insert(0, {
+                                "from_url": prev_req.url,
+                                "method": prev_req.method
+                            })
+                            curr_req = prev_req
+
+                    result["redirect_hops"] = redirect_hops
+                    pre_scroll_url = page.url
                     if response:
                         result["http_status"] = response.status
 
-                    # 延时交互与动态内容渲染 (激发懒加载)
+                    # 延时交互与动态内容渲染 (激发懒加载与前端延时 JS 跳转)
                     await self._simulate_smooth_scroll(page, delay_seconds)
+
+                    # 检查是否发生前端延时 JS 跳转 (如 location.href / meta refresh)
+                    post_scroll_url = page.url
+                    if post_scroll_url != pre_scroll_url:
+                        # 发生了前端延时重定向，额外休眠等待落地页重绘稳定
+                        await asyncio.sleep(1.5)
+
+                    final_url = page.url
+                    result["final_url"] = final_url
+
+                    # 检测跨域落地跳转 (如普通域名跳转至黑产赌博落地页)
+                    import urllib.parse
+                    init_host = (urllib.parse.urlparse(url).netloc or "").split(":")[0].lower().replace("www.", "")
+                    final_host = (urllib.parse.urlparse(final_url).netloc or "").split(":")[0].lower().replace("www.", "")
+                    if init_host and final_host and init_host != final_host:
+                        result["is_cross_domain_redirect"] = True
+                        result["redirect_notes"] = f"检测到跨域落地跳转: 从 [{init_host}] 跳转至 [{final_host}]"
 
                     # 分屏切片捕获
                     slices = await self._capture_viewport_slices(

@@ -83,6 +83,7 @@ logs/
 tmp/
 temp/
 *.png
+output/
 web_compliance_checker/output/
 
 # ==========================================

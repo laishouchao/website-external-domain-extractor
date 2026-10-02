@@ -23,6 +23,8 @@ if sys.platform.startswith("win"):
 from config import DEVICE_PROFILES, CONCURRENCY_CONFIG
 from pipeline import DecoupledInspectionPipeline
 from db_manager import UnifiedDatabaseManager
+from probe_engine import FastDomainProbeEngine
+from history_manager import GLOBAL_HISTORY_MANAGER
 
 
 def progress_reporter(current_idx: int, total_count: int, result: Dict[str, Any]):
@@ -72,6 +74,12 @@ async def async_main():
     parser.add_argument("--verify-status", default=None, help="按研判状态筛选域名 (如 unverified, verified_clean, verified_failed 或 all)")
     parser.add_argument("--domain-filter", default=None, help="按域名关键字模糊筛选 (如 qq.com)")
     parser.add_argument("--dry-run", action="store_true", help="仅从数据库检索并打印匹配的域名任务清单，不执行爬虫和模型推理")
+    parser.add_argument("--enable-probe", dest="enable_probe", action="store_true", default=True, help="启用轻量级快速探活前置过滤 (默认开启，毫秒级剔除死链)")
+    parser.add_argument("--no-probe", dest="enable_probe", action="store_false", help="禁用轻量级前置探活")
+    parser.add_argument("--probe-timeout", type=float, default=2.5, help="前置探活单目标超时阈值 (秒，默认 2.5s)")
+    parser.add_argument("--probe-concurrency", type=int, default=30, help="前置探活最大并发数 (默认 30)")
+    parser.add_argument("--resume-job", default=None, help="从指定历史批次任务 ID 恢复断点")
+    parser.add_argument("--job-id", default=None, help="显式指定批次任务 ID (用于 Web 控制台历史追踪)")
 
     # 爬虫与审核核心参数
     parser.add_argument("--delay", type=float, default=3.0, help="截图前延迟等待时间 (秒，默认 3.0)")
@@ -79,6 +87,7 @@ async def async_main():
     parser.add_argument("--api-key", default="EMPTY", help="API Key")
     parser.add_argument("--model", default="qwen2-vl", help="多模态模型标识名称 (如 qwen2-vl, llava, minicpm-v)")
     parser.add_argument("--devices", default="all", help="测试设备列表 (以逗号分隔，如 desktop_chrome,mobile_iphone_safari 或 all)")
+    parser.add_argument("--workers", "-w", dest="workers", type=int, default=None, help="并发巡检工作线程数 (同时设置浏览器与模型并发，如 -w 3)")
     parser.add_argument("--concurrency-browser", type=int, default=CONCURRENCY_CONFIG["default_browser_concurrency"], help="浏览器池最大并发渲染标签页数")
     parser.add_argument("--concurrency-llm", type=int, default=CONCURRENCY_CONFIG["default_llm_concurrency"], help="多模态模型最大并行推理请求数 (保护本地显存)")
     parser.add_argument("--slices", type=int, default=1, help="单设备分屏切片数量 (1=仅首屏, 2=首屏+页底, 3=首屏+中部+页底，不失真)")
@@ -92,6 +101,10 @@ async def async_main():
     parser.add_argument("--quiet", action="store_true", help="静默模式，仅在标准输出打印最终 JSON")
 
     args = parser.parse_args()
+
+    if args.workers is not None:
+        args.concurrency_browser = args.workers
+        args.concurrency_llm = args.workers
 
     # 可视化 Web 控制台启动模式
     if args.web:
@@ -181,27 +194,94 @@ async def async_main():
                     target_table=target_table,
                     target_field=target_field
                 )
+                if args.resume_job:
+                    processed_set = GLOBAL_HISTORY_MANAGER.get_processed_domains(args.resume_job)
+                    if processed_set:
+                        tasks = [t for t in tasks if t.get("domain") not in processed_set]
+                        if not args.quiet:
+                            print(f"[*] 断点续爬模式: 已根据批次 [{args.resume_job}] 过滤跳过 {len(processed_set)} 个已完成域名，本批剩余 {len(tasks)} 条", flush=True)
+
                 if not tasks:
                     if args.db_loop:
                         if not args.quiet:
-                            print(f"[*] 暂无待处理域名任务，休眠 {args.db_poll_interval}s 后重试...", end="\r")
+                            print(f"[*] 暂无待处理域名任务，休眠 {args.db_poll_interval}s 后继续监听新任务...", flush=True)
                         await asyncio.sleep(args.db_poll_interval)
                         continue
                     else:
                         if not args.quiet:
-                            print("[*] 数据库中没有符合条件的待审核域名任务。")
+                            print("[*] 数据库中没有符合条件的待审核域名任务。", flush=True)
                         break
 
+                current_job_id = args.job_id or args.resume_job or datetime.now().strftime("job_%Y%m%d_%H%M%S")
+                GLOBAL_HISTORY_MANAGER.create_job(
+                    current_job_id,
+                    vars(args),
+                    [t.get("domain", "") for t in tasks]
+                )
+
                 if not args.quiet:
-                    print(f"\n[*] 从 {db_source.upper()} 检索到 {len(tasks)} 条待巡检域名任务:")
-                    for idx, t in enumerate(tasks[:10], start=1):
-                        print(f"    {idx}. [ID:{t['id']}] Task:{t['task_id']} | 域名: {t['domain']} | 访问URL: {t['target_url']} | 状态: {t['verify_status']} | 等级: {t['risk_level']}")
-                    if len(tasks) > 10:
-                        print(f"    ... 及其余 {len(tasks) - 10} 条域名记录")
+                    print(f"\n[*] 从 {db_source.upper()} 检索到 {len(tasks)} 条待巡检域名任务 (总域名库去重):", flush=True)
+                    for idx, t in enumerate(tasks[:15], start=1):
+                        ref_info = f" (关联任务数: {t.get('raw_record', {}).get('ref_count', 1)})" if t.get('raw_record', {}).get('ref_count') else ""
+                        print(f"    {idx}. 域名: {t['domain']}{ref_info} | 访问URL: {t['target_url']} | 状态: {t['verify_status']} | 等级: {t['risk_level']}", flush=True)
+                    if len(tasks) > 15:
+                        print(f"    ... 及其余 {len(tasks) - 15} 条独立域名", flush=True)
 
                 if args.dry_run:
-                    print("\n[*] 【预检模式 (DRY RUN)】已列出待巡检目标，未执行网页访问与数据回写。")
+                    print("\n[*] 【预检模式 (DRY RUN)】已列出待巡检去重域名清单，未消耗流量与算力。", flush=True)
+                    GLOBAL_HISTORY_MANAGER.finish_job(current_job_id, status="completed", message="预检模式完成")
                     break
+
+                # 2. 前置轻量级极速探活 (若启用)
+                if args.enable_probe:
+                    if not args.quiet:
+                        print(f"[*] 🚀 启动轻量级快速探活前置过滤 (并发: {args.probe_concurrency}, 超时: {args.probe_timeout}s)...", flush=True)
+                    probe_engine = FastDomainProbeEngine(default_timeout=args.probe_timeout)
+                    probe_res = await probe_engine.probe_batch(
+                        tasks,
+                        target_field="target_url",
+                        max_concurrency=args.probe_concurrency
+                    )
+                    alive_tasks = probe_res["alive_tasks"]
+                    dead_tasks = probe_res["dead_tasks"]
+                    if not args.quiet:
+                        print(f"[*] 探活完成: 共 {len(tasks)} 条 | 存活: {len(alive_tasks)} 条 | 不可达/死链: {len(dead_tasks)} 条", flush=True)
+
+                    # 处理不可达死链：自动标记合规并回写数据库
+                    for dead_item in dead_tasks:
+                        d_info = dead_item.get("probe_result", {})
+                        reason = d_info.get("error_reason") or "连接超时/DNS解析失败"
+                        dead_dom = dead_item["domain"]
+
+                        dead_record = {
+                            "domain": dead_dom,
+                            "url": dead_item.get("target_url"),
+                            "checked_at": datetime.now(timezone.utc).isoformat(),
+                            "model_used": "fast_probe_filter",
+                            "verdict_summary": {
+                                "is_violation": False,
+                                "overall_risk_level": "SAFE",
+                                "primary_violation_category": "dead_domain",
+                                "primary_violation_cn": "站点不可达",
+                                "cloaking_suspected": False,
+                                "cloaking_notes": f"[前置探活不可达] {reason}，自动标记合规跳过",
+                                "category_probabilities": {}
+                            },
+                            "device_inspections": []
+                        }
+                        db_mgr.save_audit_result(dead_record, task_item=dead_item, sink=db_sink)
+                        GLOBAL_HISTORY_MANAGER.update_checkpoint(current_job_id, dead_dom, is_dead=True)
+                        if not args.quiet:
+                            print(f"  -> [探活跳过] 域名: {dead_dom} 不可达 ({reason})，已自动标记死链合规", flush=True)
+
+                    tasks = alive_tasks
+                    if not tasks:
+                        if not args.quiet:
+                            print("[*] 本批次所有待审域名均为不可达死链，已全部自动标记并持久化入库。", flush=True)
+                        GLOBAL_HISTORY_MANAGER.finish_job(current_job_id, status="completed", message="所有目标均为死链并已跳过")
+                        if not args.db_loop:
+                            break
+                        continue
 
                 # 建立访问 URL 到任务记录的映射 (处理同一域名在多任务中出现的情况)
                 url_to_tasks = {}
@@ -213,7 +293,7 @@ async def async_main():
 
                 distinct_target_urls = list(url_to_tasks.keys())
                 if not args.quiet:
-                    print(f"[*] 去重后实际访问目标 URL 数量: {len(distinct_target_urls)} 个，启动全异步流水线...")
+                    print(f"[*] 存活目标去重后实际访问 URL: {len(distinct_target_urls)} 个，启动多端仿真与多模态流水线...")
 
                 # 运行流水线
                 batch_summary = await pipeline.run_pipeline(
@@ -241,18 +321,28 @@ async def async_main():
                                 matched_tasks = v
                                 break
 
+                    summ = res.get("verdict_summary", {})
+                    is_viol = summ.get("is_violation", False)
+
                     for t_item in matched_tasks:
                         db_mgr.save_audit_result(res, task_item=t_item, sink=db_sink)
                         saved_count += 1
+                        GLOBAL_HISTORY_MANAGER.update_checkpoint(
+                            current_job_id,
+                            t_item["domain"],
+                            is_violation=is_viol,
+                            detail_info=summ
+                        )
                         if not args.quiet:
-                            summ = res.get("verdict_summary", {})
                             r_lvl = summ.get("overall_risk_level", "SAFE")
                             p_cat = summ.get("primary_violation_category", "normal")
-                            v_status = "verified_failed" if summ.get("is_violation") else "verified_clean"
+                            v_status = "verified_failed" if is_viol else "verified_clean"
                             print(f"  -> [已回写入库] ID: {t_item['id']} | Task:{t_item['task_id']} | {t_item['domain']} => 状态: {v_status}, 等级: {r_lvl}, 分类: {p_cat}")
 
                 if not args.quiet:
                     print(f"[*] 入库完成！成功同步更新 {saved_count} 条数据库域名记录。")
+
+                GLOBAL_HISTORY_MANAGER.finish_job(current_job_id, status="completed", message=f"处理完成，回写 {saved_count} 条记录")
 
                 if not args.db_loop:
                     break

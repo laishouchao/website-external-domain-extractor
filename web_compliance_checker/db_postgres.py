@@ -234,7 +234,7 @@ class PostgresClient:
                 user=self.user,
                 password=self.password,
                 dbname=self.database,
-                connect_timeout=self.timeout
+                connect_timeout=min(self.timeout, 4)
             )
             self._pg_conn.autocommit = True
         else:
@@ -252,7 +252,7 @@ class PostgresClient:
                     user=self.user,
                     password=self.password,
                     dbname=self.database,
-                    connect_timeout=self.timeout
+                    connect_timeout=min(self.timeout, 4)
                 )
                 self._pg_conn.autocommit = True
 
@@ -352,7 +352,18 @@ class PostgresClient:
 
         if task_table == "external_domains":
             sql_base = f"""
-            SELECT id, task_id, domain, root_domain, sample_page_url, risk_level, risk_tags, risk_remark, risk_source, verify_status
+            SELECT 
+                min(id) as id,
+                min(task_id) as task_id,
+                domain,
+                min(root_domain) as root_domain,
+                min(sample_page_url) as sample_page_url,
+                min(risk_level) as risk_level,
+                min(risk_tags) as risk_tags,
+                min(risk_remark) as risk_remark,
+                min(risk_source) as risk_source,
+                min(verify_status) as verify_status,
+                count(*) as ref_count
             FROM {task_table}
             WHERE 1=1
             """
@@ -379,7 +390,7 @@ class PostgresClient:
             if clauses:
                 sql_base += " AND " + " AND ".join(clauses)
 
-            sql_base += f" ORDER BY id ASC LIMIT %s;"
+            sql_base += f" GROUP BY domain ORDER BY min(id) ASC LIMIT %s;"
             params.append(limit)
 
             return self.query(sql_base, tuple(params))
@@ -499,18 +510,33 @@ class PostgresClient:
             }
             detail_json = json.dumps(detail_obj, ensure_ascii=False)
 
-            sql = f"""
-            UPDATE {task_table}
-            SET risk_level = %s,
-                risk_tags = %s,
-                risk_remark = %s,
-                risk_source = CASE WHEN risk_source = 'manual' THEN risk_source ELSE 'ai_compliance' END,
-                verify_status = %s,
-                verify_time = %s,
-                verify_detail = %s
-            WHERE id = %s;
-            """
-            self.execute(sql, (risk_norm, tags_json, risk_remark, final_verify_status, now_str, detail_json, domain_id))
+            target_domain = (task_item or {}).get("domain") or (full_record or {}).get("domain")
+            if target_domain:
+                sql = f"""
+                UPDATE {task_table}
+                SET risk_level = %s,
+                    risk_tags = %s,
+                    risk_remark = %s,
+                    risk_source = CASE WHEN risk_source = 'manual' THEN risk_source ELSE 'ai_compliance' END,
+                    verify_status = %s,
+                    verify_time = %s,
+                    verify_detail = %s
+                WHERE domain = %s;
+                """
+                self.execute(sql, (risk_norm, tags_json, risk_remark, final_verify_status, now_str, detail_json, target_domain))
+            else:
+                sql = f"""
+                UPDATE {task_table}
+                SET risk_level = %s,
+                    risk_tags = %s,
+                    risk_remark = %s,
+                    risk_source = CASE WHEN risk_source = 'manual' THEN risk_source ELSE 'ai_compliance' END,
+                    verify_status = %s,
+                    verify_time = %s,
+                    verify_detail = %s
+                WHERE id = %s;
+                """
+                self.execute(sql, (risk_norm, tags_json, risk_remark, final_verify_status, now_str, detail_json, domain_id))
 
         elif task_table == "risk_page_remediations":
             final_verify_status = "verified_failed" if is_violation else "verified_clean"
