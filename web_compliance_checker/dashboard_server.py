@@ -89,6 +89,8 @@ class InspectionJobRunner:
             domain_filter = config.get("domain_filter")
             enable_probe = bool(config.get("enable_probe", True))
             probe_timeout = float(config.get("probe_timeout", 2.5))
+            enable_dns_probe = bool(config.get("enable_dns_probe", True))
+            dns_timeout = float(config.get("dns_timeout", 1.2))
             resume_job_id = config.get("resume_job_id")
 
             cmd = [
@@ -103,6 +105,10 @@ class InspectionJobRunner:
                 cmd.append("--no-probe")
             else:
                 cmd.extend(["--probe-timeout", str(probe_timeout)])
+                if not enable_dns_probe:
+                    cmd.append("--no-dns-probe")
+                else:
+                    cmd.extend(["--dns-timeout", str(dns_timeout)])
             if resume_job_id:
                 cmd.extend(["--resume-job", str(resume_job_id)])
             if dry_run:
@@ -616,7 +622,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           <div class="pt-2 border-t border-slate-800 space-y-2">
             <label class="flex items-center gap-2 cursor-pointer text-emerald-400 font-semibold">
               <input type="checkbox" id="cfgProbe" checked class="rounded text-emerald-600">
-              <span>⚡ 开启轻量级快速探活前置过滤 (2.5s 极速跳过死链/不可达，提升3~5倍吞吐)</span>
+              <span>⚡ 开启轻量级快速探活前置过滤 (极速跳过死链/不可达，提升3~5倍吞吐)</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer text-sky-400 font-semibold pl-6">
+              <input type="checkbox" id="cfgDnsProbe" checked class="rounded text-sky-600">
+              <span>🌐 探活前启用异步 DNS (nslookup) 预检 (10ms 拦截 NXDOMAIN 与内网 SSRF)</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer text-slate-400">
               <input type="checkbox" id="cfgMock" class="rounded text-indigo-600">
@@ -929,6 +939,26 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
       document.getElementById('detailPrimary').innerText = sum.primary_violation_cn || sum.primary_violation_category || '待研判';
 
+      // DNS 预检情报
+      const dnsIps = sum.dns_resolved_ips || r.dns_resolved_ips || [];
+      const dnsStatus = sum.dns_status || r.dns_status;
+      const cnames = sum.dns_cnames || r.dns_cnames || [];
+      let dnsHtml = '';
+      if (dnsIps.length > 0 || dnsStatus) {
+        const isSsrf = sum.primary_violation_category === 'ssrf_risk' || dnsStatus === 'PRIVATE_IP';
+        const tagBg = isSsrf ? 'bg-rose-950/80 text-rose-300 border-rose-800' : 'bg-slate-800 text-sky-300 border-slate-700';
+        dnsHtml = `
+          <div class="mt-2.5 pt-2 border-t border-slate-700/60 text-xs flex flex-wrap items-center gap-2">
+            <span class="text-indigo-400 font-semibold flex items-center gap-1">
+              <span>🌐</span> DNS 预检:
+            </span>
+            ${dnsStatus ? `<span class="px-1.5 py-0.5 rounded font-mono text-[11px] border ${tagBg}">${dnsStatus}</span>` : ''}
+            ${dnsIps.length > 0 ? `<span class="text-slate-300 font-mono">解析IP: <strong class="text-sky-300">${dnsIps.join(', ')}</strong></span>` : ''}
+            ${cnames.length > 0 ? `<span class="text-slate-400 font-mono">CNAME: ${cnames.join(', ')}</span>` : ''}
+          </div>
+        `;
+      }
+
       // 研判依据说明
       const notesBox = document.getElementById('detailNotesBox');
       if (risk === 'PENDING') {
@@ -943,9 +973,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               </div>
             </div>
           </div>
+          ${dnsHtml}
         `;
       } else {
-        notesBox.innerHTML = `<strong>研判依据与特征：</strong> ${sum.cloaking_notes || r.risk_remark || "页面各端展示一致，未识别到违规及伪装特征。"}`;
+        notesBox.innerHTML = `<div><strong>研判依据与特征：</strong> ${sum.cloaking_notes || r.risk_remark || "页面各端展示一致，未识别到违规及伪装特征。"}</div>${dnsHtml}`;
       }
 
       // 6 大分类概率矩阵
@@ -1247,6 +1278,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const loop = document.getElementById('cfgLoop').checked;
       const mock = document.getElementById('cfgMock').checked;
       const enableProbe = document.getElementById('cfgProbe') ? document.getElementById('cfgProbe').checked : true;
+      const enableDnsProbe = document.getElementById('cfgDnsProbe') ? document.getElementById('cfgDnsProbe').checked : true;
 
       // 设备端拼装
       const devs = [];
@@ -1270,7 +1302,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             poll_interval: chosenPollInterval,
             mock: mock,
             dry_run: dryRun,
-            enable_probe: enableProbe
+            enable_probe: enableProbe,
+            enable_dns_probe: enableDnsProbe
           })
         });
         const res = await resp.json();
@@ -1729,6 +1762,13 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                             "cloaking_notes": log.get("cloaking_notes"),
                             "category_probabilities": log.get("category_probabilities") or {}
                         }
+                        rep_summ = rep.get("verdict_summary") or {}
+                        if "dns_resolved_ips" not in verdict_summary and rep_summ.get("dns_resolved_ips"):
+                            verdict_summary["dns_resolved_ips"] = rep_summ.get("dns_resolved_ips")
+                        if "dns_status" not in verdict_summary and rep_summ.get("dns_status"):
+                            verdict_summary["dns_status"] = rep_summ.get("dns_status")
+                        if "dns_cnames" not in verdict_summary and rep_summ.get("dns_cnames"):
+                            verdict_summary["dns_cnames"] = rep_summ.get("dns_cnames")
                         dom = log.get("domain") or (log.get("url") or "").replace("https://", "").replace("http://", "").split("/")[0]
                         tasks.append({
                             "id": log.get("id"),
@@ -1846,6 +1886,14 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                                 "cloaking_notes": log.get("cloaking_notes"),
                                 "category_probabilities": log.get("category_probabilities") or {}
                             }
+                            rep_summ = rep.get("verdict_summary") or {}
+                            if "dns_resolved_ips" not in verdict_summary and rep_summ.get("dns_resolved_ips"):
+                                verdict_summary["dns_resolved_ips"] = rep_summ.get("dns_resolved_ips")
+                            if "dns_status" not in verdict_summary and rep_summ.get("dns_status"):
+                                verdict_summary["dns_status"] = rep_summ.get("dns_status")
+                            if "dns_cnames" not in verdict_summary and rep_summ.get("dns_cnames"):
+                                verdict_summary["dns_cnames"] = rep_summ.get("dns_cnames")
+
                             tasks.append({
                                 "id": row.get("id"),
                                 "task_id": row.get("task_id", 0),
@@ -1901,6 +1949,9 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                                     "primary_violation_cn": tags[0] if tags else def_cn,
                                     "cloaking_suspected": bool(detail_obj.get("cloaking_suspected", False)),
                                     "cloaking_notes": notes,
+                                    "dns_resolved_ips": detail_obj.get("dns_resolved_ips", []),
+                                    "dns_cnames": detail_obj.get("dns_cnames", []),
+                                    "dns_status": detail_obj.get("dns_status"),
                                     "category_probabilities": detail_obj.get("category_probabilities") or {}
                                 },
                                 "device_inspections": detail_obj.get("details", [])

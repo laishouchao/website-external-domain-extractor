@@ -33,6 +33,8 @@ class ComplianceExportManager:
             "初始检测地址",
             "最终落地URL",
             "跨域跳转检测",
+            "DNS解析IP",
+            "DNS解析状态",
             "研判状态",
             "风险等级",
             "主要违规分类",
@@ -67,6 +69,14 @@ class ComplianceExportManager:
             final_url_display = "; ".join(final_url_set) if final_url_set else r.get("url", "")
             shot_display = "; ".join(shot_files) if shot_files else "无截图"
 
+            # DNS 预检信息
+            dns_ips = verdict.get("dns_resolved_ips") or r.get("dns_resolved_ips") or []
+            dns_ips_display = ", ".join(dns_ips) if isinstance(dns_ips, list) else str(dns_ips or "无")
+            dns_status_display = verdict.get("dns_status") or r.get("dns_status") or ("已解析" if dns_ips else "-")
+            cnames = verdict.get("dns_cnames") or []
+            if cnames:
+                dns_status_display += f" (CNAME: {', '.join(cnames)})"
+
             # 判定描述
             notes = verdict.get("cloaking_notes") or r.get("risk_remark") or ""
 
@@ -78,6 +88,8 @@ class ComplianceExportManager:
                 r.get("url", f"https://{r.get('domain', '')}"),
                 final_url_display,
                 "是 (跨域落地)" if (cross_redirect or verdict.get("cross_domain_redirect")) else "否",
+                dns_ips_display,
+                dns_status_display,
                 r.get("verify_status") or ("已研判违规" if verdict.get("is_violation") else "已研判合规"),
                 verdict.get("overall_risk_level", "SAFE"),
                 verdict.get("primary_violation_cn") or verdict.get("primary_violation_category", "正常合规"),

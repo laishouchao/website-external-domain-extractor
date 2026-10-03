@@ -76,6 +76,9 @@ async def async_main():
     parser.add_argument("--dry-run", action="store_true", help="仅从数据库检索并打印匹配的域名任务清单，不执行爬虫和模型推理")
     parser.add_argument("--enable-probe", dest="enable_probe", action="store_true", default=True, help="启用轻量级快速探活前置过滤 (默认开启，毫秒级剔除死链)")
     parser.add_argument("--no-probe", dest="enable_probe", action="store_false", help="禁用轻量级前置探活")
+    parser.add_argument("--enable-dns-probe", dest="enable_dns_probe", action="store_true", default=True, help="探活前启用异步 DNS (nslookup) 预解析 (默认开启，毫秒过滤 NXDOMAIN 与 SSRF)")
+    parser.add_argument("--no-dns-probe", dest="enable_dns_probe", action="store_false", help="探活前禁用 DNS 预解析")
+    parser.add_argument("--dns-timeout", type=float, default=1.2, help="DNS 预解析单目标超时阈值 (秒，默认 1.2s)")
     parser.add_argument("--probe-timeout", type=float, default=2.5, help="前置探活单目标超时阈值 (秒，默认 2.5s)")
     parser.add_argument("--probe-concurrency", type=int, default=30, help="前置探活最大并发数 (默认 30)")
     parser.add_argument("--resume-job", default=None, help="从指定历史批次任务 ID 恢复断点")
@@ -235,8 +238,13 @@ async def async_main():
                 # 2. 前置轻量级极速探活 (若启用)
                 if args.enable_probe:
                     if not args.quiet:
-                        print(f"[*] 🚀 启动轻量级快速探活前置过滤 (并发: {args.probe_concurrency}, 超时: {args.probe_timeout}s)...", flush=True)
-                    probe_engine = FastDomainProbeEngine(default_timeout=args.probe_timeout)
+                        dns_tip = f", DNS预检: {args.dns_timeout}s" if args.enable_dns_probe else ", DNS预检: 禁用"
+                        print(f"[*] 🚀 启动轻量级快速探活前置过滤 (并发: {args.probe_concurrency}, HTTP超时: {args.probe_timeout}s{dns_tip})...", flush=True)
+                    probe_engine = FastDomainProbeEngine(
+                        default_timeout=args.probe_timeout,
+                        dns_timeout=args.dns_timeout,
+                        enable_dns_probe=args.enable_dns_probe
+                    )
                     probe_res = await probe_engine.probe_batch(
                         tasks,
                         target_field="target_url",
@@ -244,27 +252,54 @@ async def async_main():
                     )
                     alive_tasks = probe_res["alive_tasks"]
                     dead_tasks = probe_res["dead_tasks"]
+                    p_stats = probe_res.get("stats", {})
                     if not args.quiet:
-                        print(f"[*] 探活完成: 共 {len(tasks)} 条 | 存活: {len(alive_tasks)} 条 | 不可达/死链: {len(dead_tasks)} 条", flush=True)
+                        print(
+                            f"[*] 探活完成: 共 {len(tasks)} 条 | 存活: {len(alive_tasks)} 条 | "
+                            f"DNS未解析(NXDOMAIN): {p_stats.get('dns_nxdomain_count', 0)} 条 | "
+                            f"内网/SSRF阻断: {p_stats.get('dns_private_ip_count', 0)} 条 | "
+                            f"HTTP不可达: {p_stats.get('http_dead_count', 0)} 条",
+                            flush=True
+                        )
 
-                    # 处理不可达死链：自动标记合规并回写数据库
+                    # 处理不可达死链与安全拦截：自动标记并回写数据库
                     for dead_item in dead_tasks:
                         d_info = dead_item.get("probe_result", {})
                         reason = d_info.get("error_reason") or "连接超时/DNS解析失败"
                         dead_dom = dead_item["domain"]
+                        is_sec_risk = d_info.get("is_security_risk", False)
+                        dns_status = d_info.get("dns_status", "UNKNOWN")
+                        resolved_ips = d_info.get("resolved_ips", [])
+                        cnames = d_info.get("cnames", [])
+
+                        if is_sec_risk:
+                            is_viol = True
+                            risk_lvl = "HIGH"
+                            p_cat = "ssrf_risk"
+                            p_cn = "内网穿透/SSRF风险"
+                            remark = f"[DNS安全拦截] {reason}"
+                        else:
+                            is_viol = False
+                            risk_lvl = "SAFE"
+                            p_cat = "dead_domain"
+                            p_cn = "站点不可达 (DNS未解析)" if dns_status in ("NXDOMAIN", "NO_ANSWER") else "站点不可达"
+                            remark = f"[前置探活不可达] {reason}，自动标记合规跳过"
 
                         dead_record = {
                             "domain": dead_dom,
                             "url": dead_item.get("target_url"),
                             "checked_at": datetime.now(timezone.utc).isoformat(),
-                            "model_used": "fast_probe_filter",
+                            "model_used": "fast_probe_dns" if d_info.get("stage") in ("dns_failed", "dns_blocked") else "fast_probe_filter",
                             "verdict_summary": {
-                                "is_violation": False,
-                                "overall_risk_level": "SAFE",
-                                "primary_violation_category": "dead_domain",
-                                "primary_violation_cn": "站点不可达",
+                                "is_violation": is_viol,
+                                "overall_risk_level": risk_lvl,
+                                "primary_violation_category": p_cat,
+                                "primary_violation_cn": p_cn,
                                 "cloaking_suspected": False,
-                                "cloaking_notes": f"[前置探活不可达] {reason}，自动标记合规跳过",
+                                "cloaking_notes": remark,
+                                "dns_resolved_ips": resolved_ips,
+                                "dns_cnames": cnames,
+                                "dns_status": dns_status,
                                 "category_probabilities": {}
                             },
                             "device_inspections": []
@@ -272,7 +307,8 @@ async def async_main():
                         db_mgr.save_audit_result(dead_record, task_item=dead_item, sink=db_sink)
                         GLOBAL_HISTORY_MANAGER.update_checkpoint(current_job_id, dead_dom, is_dead=True)
                         if not args.quiet:
-                            print(f"  -> [探活跳过] 域名: {dead_dom} 不可达 ({reason})，已自动标记死链合规", flush=True)
+                            tag = "[DNS安全阻断]" if is_sec_risk else "[探活跳过]"
+                            print(f"  -> {tag} 域名: {dead_dom} => {reason}，已自动持久化入库", flush=True)
 
                     tasks = alive_tasks
                     if not tasks:
@@ -325,6 +361,14 @@ async def async_main():
                     is_viol = summ.get("is_violation", False)
 
                     for t_item in matched_tasks:
+                        probe_info = t_item.get("probe_result") or {}
+                        if probe_info.get("resolved_ips"):
+                            summ["dns_resolved_ips"] = probe_info["resolved_ips"]
+                        if probe_info.get("cnames"):
+                            summ["dns_cnames"] = probe_info["cnames"]
+                        if probe_info.get("dns_status"):
+                            summ["dns_status"] = probe_info["dns_status"]
+
                         db_mgr.save_audit_result(res, task_item=t_item, sink=db_sink)
                         saved_count += 1
                         GLOBAL_HISTORY_MANAGER.update_checkpoint(
