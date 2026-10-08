@@ -117,6 +117,13 @@
 
 ---
 
+### 10. 网页多端仿真与多模态安全巡检控制台 (巡检子系统)
+> 联动全量外部域名数据库（PostgreSQL / ClickHouse），支持轻量级 DNS/HTTP 快速探活、桌面端与移动端双端无头仿真渲染、Playwright 隐身防爬指纹绕过、多模态色情/涉赌/暗链识别、证据链留存与一键研判报表导出。
+
+![多端仿真安全巡检控制台](docs/images/10_compliance_checker_dashboard.png)
+
+---
+
 ## 🚀 快速启动指南
 
 ### 环境要求
@@ -127,25 +134,24 @@
 如果需要全新安装依赖，执行：
 ```bash
 pip install -r requirements.txt
+playwright install chromium
 ```
 
 ### 启动服务
-#### 方式一：Windows 双击启动
-直接双击运行项目根目录下的 `start.bat` 即可自动调用 Python 启动服务。
+#### 1. 启动主系统控制台 (端口 8000)
+- **方式一：Windows 双击启动**  
+  直接双击运行项目根目录下的 `start.bat` 即可自动调用 Python 启动服务。
+- **方式二：命令行启动**  
+  ```bash
+  python run.py
+  ```
+  打开浏览器访问：**http://localhost:8000** 即可进入主系统 Web 控制台。
 
-#### 方式二：命令行启动
+#### 2. 启动多端仿真与安全巡检子系统 (端口 8888)
 ```bash
-python run.py
+python web_compliance_checker/dashboard_server.py
 ```
-启动成功后，控制台会输出：
-```text
-===============================================================
-  网站外部域名提取与全深度网站地图系统 正在启动...
-  访问地址: http://localhost:8000
-===============================================================
-```
-
-打开浏览器访问：**http://localhost:8000** 即可进入现代化 Web 系统。
+打开浏览器访问：**http://localhost:8888** 即可进入安全巡检大屏与调度控制台。
 
 ---
 

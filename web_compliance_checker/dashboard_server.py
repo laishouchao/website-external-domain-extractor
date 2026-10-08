@@ -1976,7 +1976,7 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
         }
 
 
-def run_dashboard(host: str = "127.0.0.1", port: int = 8888, output_dir: str = "output"):
+def run_dashboard(host: str = "0.0.0.0", port: int = 8888, output_dir: str = "output"):
     handler_factory = lambda *args, **kwargs: ComplianceDashboardHandler(*args, output_dir=output_dir, **kwargs)
     try:
         server = ThreadingHTTPServer((host, port), handler_factory)
@@ -1986,7 +1986,7 @@ def run_dashboard(host: str = "127.0.0.1", port: int = 8888, output_dir: str = "
     print("=" * 60)
     print(f"[*] 网页合规巡检数据库大屏已启动!")
     print(f"[*] 直连数据库: PostgreSQL (website_domain_db)")
-    print(f"[*] 本地浏览器访问地址: http://localhost:{port}")
+    print(f"[*] 本地访问地址: http://localhost:{port} 或 http://192.168.1.207:{port}")
     print("=" * 60)
     try:
         server.serve_forever()
