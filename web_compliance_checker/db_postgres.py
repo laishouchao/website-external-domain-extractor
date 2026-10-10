@@ -265,8 +265,19 @@ class PostgresClient:
                 return [dict(r) for r in rows]
         else:
             if params:
-                # 简单格式化 fallback
-                formatted_sql = sql % tuple(f"'{p}'" if isinstance(p, str) else str(p) for p in params)
+                # 安全替换每一个 %s 占位符，避免破坏 SQL 中包含的字面量 % 字符
+                formatted_sql = sql
+                for p in params:
+                    if p is None:
+                        val_str = "NULL"
+                    elif isinstance(p, (int, float)):
+                        val_str = str(p)
+                    elif isinstance(p, bool):
+                        val_str = "TRUE" if p else "FALSE"
+                    else:
+                        escaped = str(p).replace("'", "''")
+                        val_str = f"'{escaped}'"
+                    formatted_sql = formatted_sql.replace("%s", val_str, 1)
                 return self.mini_client.query(formatted_sql)
             return self.mini_client.query(sql)
 
@@ -277,7 +288,18 @@ class PostgresClient:
                 cur.execute(sql, params)
         else:
             if params:
-                formatted_sql = sql % tuple(f"'{p}'" if isinstance(p, str) else str(p) for p in params)
+                formatted_sql = sql
+                for p in params:
+                    if p is None:
+                        val_str = "NULL"
+                    elif isinstance(p, (int, float)):
+                        val_str = str(p)
+                    elif isinstance(p, bool):
+                        val_str = "TRUE" if p else "FALSE"
+                    else:
+                        escaped = str(p).replace("'", "''")
+                        val_str = f"'{escaped}'"
+                    formatted_sql = formatted_sql.replace("%s", val_str, 1)
                 self.mini_client.execute(formatted_sql)
             else:
                 self.mini_client.execute(sql)
@@ -383,14 +405,15 @@ class PostgresClient:
                 clauses.append("domain ILIKE %s")
                 params.append(f"%{domain_filter.strip()}%")
 
-            # 默认提取未验证或风险待判定的记录
+            # 默认提取未验证或风险待判定的记录，优先调度未巡检过的域名
             if not risk_level and not verify_status:
                 clauses.append("(verify_status = 'unverified' OR risk_level = 'pending')")
 
             if clauses:
                 sql_base += " AND " + " AND ".join(clauses)
 
-            sql_base += f" GROUP BY domain ORDER BY min(id) ASC LIMIT %s;"
+            # 优先巡检未记录过 verify_time 的域名，避免重复提取
+            sql_base += f" GROUP BY domain ORDER BY (max(verify_time) IS NOT NULL) ASC, min(id) ASC LIMIT %s;"
             params.append(limit)
 
             return self.query(sql_base, tuple(params))
@@ -448,7 +471,10 @@ class PostgresClient:
     ):
         """
         将大模型审核裁决结果写回任务表。
-        深度适配 external_domains（更新 risk_level、risk_tags、risk_remark、risk_source、verify_status、verify_time、verify_detail）。
+        业务规则严格约束：
+        1. 仅当检出确凿违规（is_violation=True）、设备端伪装（cloaking）或 SSRF 阻断时，才回写标记为异常 verified_failed，置为 high/critical；
+        2. 判定未见异常、健康合规或 404/500 失效报错站点，一律保持待研判记录（verify_status='unverified', risk_level 保持 pending），
+           绝不标记为安全（禁止写入 verified_clean 或 safe），同时在 verify_detail 与 audit_logs 中完整归档快照证据。
         """
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -456,109 +482,200 @@ class PostgresClient:
         risk_norm = RISK_LEVEL_MAP.get(risk_level.upper(), risk_level.lower())
         primary_cn = CATEGORY_NAME_MAP.get(primary_violation, primary_violation)
 
+        cloaking = bool(verdict_summary and verdict_summary.get("cloaking_suspected"))
+        ssrf = bool(verdict_summary and (verdict_summary.get("primary_violation_category") == "ssrf_risk" or verdict_summary.get("dns_status") == "PRIVATE_IP"))
+        is_404 = bool(verdict_summary and verdict_summary.get("is_404"))
+        is_http_err = bool(verdict_summary and verdict_summary.get("is_http_error"))
+        is_anomaly = bool(is_violation or cloaking or ssrf)
+
         if task_table == "external_domains":
-            # 1. 计算系统标准 verify_status: verified_failed / verified_clean / error
-            if status == "error":
-                final_verify_status = "error"
-            elif is_violation:
-                final_verify_status = "verified_failed"
-            else:
-                final_verify_status = "verified_clean"
-
-            # 2. 构建 risk_tags
-            tags_list = []
-            if is_violation:
-                if primary_cn and primary_cn != "正常合规":
-                    tags_list.append(primary_cn)
-                if verdict_summary and verdict_summary.get("cloaking_suspected"):
-                    tags_list.append("设备伪装(Cloaking)")
-            tags_json = json.dumps(tags_list, ensure_ascii=False)
-
-            # 3. 构建 risk_remark
-            if is_violation:
-                cloaking_str = f" [发现设备伪装: {verdict_summary.get('cloaking_notes')}]" if verdict_summary and verdict_summary.get("cloaking_suspected") else ""
-                risk_remark = f"AI多模态审核判定: [{primary_cn}], 风险等级: {risk_norm}.{cloaking_str}"
-            else:
-                risk_remark = "AI多模态审查正常，未检出违规涉敏内容。"
-
-            # 4. 构建与系统前端弹窗完全兼容的 verify_detail JSON
-            detail_obj = {
-                "verify_status": final_verify_status,
-                "verify_time": now_str,
-                "summary": f"AI多模态深度巡检: {'检出违规内容' if is_violation else '合规安全'}",
-                "model_used": (full_record or {}).get("model_used", "XiaoAi"),
-                "is_violation": is_violation,
-                "overall_risk_level": risk_norm,
-                "primary_violation": primary_violation,
-                "primary_violation_cn": primary_cn,
-                "cloaking_suspected": bool(verdict_summary.get("cloaking_suspected", False)) if verdict_summary else False,
-                "cloaking_notes": verdict_summary.get("cloaking_notes", "") if verdict_summary else "",
-                "category_probabilities": verdict_summary.get("category_probabilities", {}) if verdict_summary else {},
-                "details": [
-                    {
-                        "device_name": dev.get("device_name", ""),
-                        "is_mobile": dev.get("is_mobile", False),
-                        "status": dev.get("capture_status", ""),
-                        "is_violation": dev.get("model_verdict", {}).get("is_violation", False),
-                        "risk_level": dev.get("model_verdict", {}).get("risk_level", "SAFE"),
-                        "violation_details": dev.get("model_verdict", {}).get("violation_details", ""),
-                        "screenshot_path": dev.get("screenshot_path", ""),
-                        "screenshot_hash": dev.get("screenshot_sha256", "")
-                    }
-                    for dev in (full_record or {}).get("device_inspections", [])
-                ]
-            }
-            detail_json = json.dumps(detail_obj, ensure_ascii=False)
-
             target_domain = (task_item or {}).get("domain") or (full_record or {}).get("domain")
-            if target_domain:
-                sql = f"""
-                UPDATE {task_table}
-                SET risk_level = %s,
-                    risk_tags = %s,
-                    risk_remark = %s,
-                    risk_source = CASE WHEN risk_source = 'manual' THEN risk_source ELSE 'ai_compliance' END,
-                    verify_status = %s,
-                    verify_time = %s,
-                    verify_detail = %s
-                WHERE domain = %s;
-                """
-                self.execute(sql, (risk_norm, tags_json, risk_remark, final_verify_status, now_str, detail_json, target_domain))
+
+            if is_anomaly:
+                final_verify_status = "verified_failed"
+                eff_risk_level = "critical" if risk_norm == "critical" else "high"
+
+                tags_list = []
+                if primary_cn and primary_cn not in ("正常合规", "未见异常 (合规/正常)", "页面不存在 (404)"):
+                    tags_list.append(primary_cn)
+                if cloaking:
+                    tags_list.append("设备伪装(Cloaking)")
+                if ssrf:
+                    tags_list.append("SSRF内网穿透")
+                tags_json = json.dumps(tags_list, ensure_ascii=False)
+
+                cloaking_str = f" [发现设备伪装: {verdict_summary.get('cloaking_notes')}]" if cloaking else ""
+                risk_remark = f"AI多模态审核检出违规: [{primary_cn}], 风险等级: {eff_risk_level}.{cloaking_str}"
+
+                detail_obj = {
+                    "verify_status": final_verify_status,
+                    "verify_time": now_str,
+                    "summary": f"AI多模态深度巡检: 检出违规内容 [{primary_cn}]",
+                    "model_used": (full_record or {}).get("model_used", "XiaoAi"),
+                    "is_violation": True,
+                    "is_anomaly": True,
+                    "is_404": is_404,
+                    "overall_risk_level": eff_risk_level,
+                    "primary_violation": primary_violation,
+                    "primary_violation_cn": primary_cn,
+                    "cloaking_suspected": cloaking,
+                    "cloaking_notes": verdict_summary.get("cloaking_notes", "") if verdict_summary else "",
+                    "dns_resolved_ips": verdict_summary.get("dns_resolved_ips", []) if verdict_summary else [],
+                    "dns_cnames": verdict_summary.get("dns_cnames", []) if verdict_summary else [],
+                    "dns_status": verdict_summary.get("dns_status", "") if verdict_summary else "",
+                    "category_probabilities": verdict_summary.get("category_probabilities", {}) if verdict_summary else {},
+                    "details": [
+                        {
+                            "device_name": dev.get("device_name", ""),
+                            "is_mobile": dev.get("is_mobile", False),
+                            "status": dev.get("capture_status", ""),
+                            "is_violation": dev.get("model_verdict", {}).get("is_violation", False),
+                            "risk_level": dev.get("model_verdict", {}).get("risk_level", "SAFE"),
+                            "violation_details": dev.get("model_verdict", {}).get("violation_details", ""),
+                            "screenshot_path": dev.get("screenshot_path", ""),
+                            "screenshot_hash": dev.get("screenshot_sha256", ""),
+                            "slices": dev.get("slices_audited", [])
+                        }
+                        for dev in (full_record or {}).get("device_inspections", [])
+                    ]
+                }
+                detail_json = json.dumps(detail_obj, ensure_ascii=False)
+
+                if target_domain:
+                    sql = f"""
+                    UPDATE {task_table}
+                    SET risk_level = %s,
+                        risk_tags = %s,
+                        risk_remark = %s,
+                        risk_source = CASE WHEN risk_source = 'manual' THEN risk_source ELSE 'ai_compliance' END,
+                        verify_status = 'verified_failed',
+                        verify_time = %s,
+                        verify_detail = %s
+                    WHERE domain = %s;
+                    """
+                    self.execute(sql, (eff_risk_level, tags_json, risk_remark, now_str, detail_json, target_domain))
+                else:
+                    sql = f"""
+                    UPDATE {task_table}
+                    SET risk_level = %s,
+                        risk_tags = %s,
+                        risk_remark = %s,
+                        risk_source = CASE WHEN risk_source = 'manual' THEN risk_source ELSE 'ai_compliance' END,
+                        verify_status = 'verified_failed',
+                        verify_time = %s,
+                        verify_detail = %s
+                    WHERE id = %s;
+                    """
+                    self.execute(sql, (eff_risk_level, tags_json, risk_remark, now_str, detail_json, domain_id))
+
             else:
-                sql = f"""
-                UPDATE {task_table}
-                SET risk_level = %s,
-                    risk_tags = %s,
-                    risk_remark = %s,
-                    risk_source = CASE WHEN risk_source = 'manual' THEN risk_source ELSE 'ai_compliance' END,
-                    verify_status = %s,
-                    verify_time = %s,
-                    verify_detail = %s
-                WHERE id = %s;
-                """
-                self.execute(sql, (risk_norm, tags_json, risk_remark, final_verify_status, now_str, detail_json, domain_id))
+                # 非异常（正常页面、404报错、探活死链等）：保持待研判 unverified 记录，严禁标记为 safe / verified_clean
+                if is_404:
+                    summary_text = "页面返回 404 Not Found 报错失效，未识别到违规内容，系统严格保持待研判记录"
+                    eff_cat_cn = "页面不存在 (404)"
+                    eff_cat = "page_not_found"
+                elif is_http_err:
+                    summary_text = f"页面返回 HTTP 异常响应，系统严格保持待研判记录"
+                    eff_cat_cn = primary_cn or "HTTP异常"
+                    eff_cat = primary_violation or "http_error"
+                elif verdict_summary and verdict_summary.get("primary_violation_category") == "dead_domain":
+                    summary_text = "前置探活不可达死链，系统保持待研判记录"
+                    eff_cat_cn = "站点不可达"
+                    eff_cat = "dead_domain"
+                else:
+                    summary_text = "AI多模态审查未见涉敏违规内容，系统保持待研判记录"
+                    eff_cat_cn = "未见异常"
+                    eff_cat = "normal"
+
+                detail_obj = {
+                    "verify_status": "unverified",
+                    "verify_time": now_str,
+                    "summary": summary_text,
+                    "model_used": (full_record or {}).get("model_used", "XiaoAi"),
+                    "is_violation": False,
+                    "is_anomaly": False,
+                    "is_404": is_404,
+                    "overall_risk_level": "pending",
+                    "primary_violation": eff_cat,
+                    "primary_violation_cn": eff_cat_cn,
+                    "cloaking_suspected": False,
+                    "cloaking_notes": verdict_summary.get("cloaking_notes", summary_text) if verdict_summary else summary_text,
+                    "dns_resolved_ips": verdict_summary.get("dns_resolved_ips", []) if verdict_summary else [],
+                    "dns_cnames": verdict_summary.get("dns_cnames", []) if verdict_summary else [],
+                    "dns_status": verdict_summary.get("dns_status", "") if verdict_summary else "",
+                    "category_probabilities": verdict_summary.get("category_probabilities", {}) if verdict_summary else {},
+                    "details": [
+                        {
+                            "device_name": dev.get("device_name", ""),
+                            "is_mobile": dev.get("is_mobile", False),
+                            "status": dev.get("capture_status", ""),
+                            "is_violation": False,
+                            "risk_level": "PENDING",
+                            "violation_details": dev.get("model_verdict", {}).get("violation_details", ""),
+                            "screenshot_path": dev.get("screenshot_path", ""),
+                            "screenshot_hash": dev.get("screenshot_sha256", ""),
+                            "slices": dev.get("slices_audited", [])
+                        }
+                        for dev in (full_record or {}).get("device_inspections", [])
+                    ]
+                }
+                detail_json = json.dumps(detail_obj, ensure_ascii=False)
+
+                # 仅持久化更新 verify_detail 与 verify_time，绝不修改 verify_status 与 risk_level 为 safe/verified_clean
+                if target_domain:
+                    sql = f"""
+                    UPDATE {task_table}
+                    SET verify_detail = %s,
+                        verify_time = %s
+                    WHERE domain = %s;
+                    """
+                    self.execute(sql, (detail_json, now_str, target_domain))
+                else:
+                    sql = f"""
+                    UPDATE {task_table}
+                    SET verify_detail = %s,
+                        verify_time = %s
+                    WHERE id = %s;
+                    """
+                    self.execute(sql, (detail_json, now_str, domain_id))
 
         elif task_table == "risk_page_remediations":
-            final_verify_status = "verified_failed" if is_violation else "verified_clean"
-            tags_json = json.dumps([primary_cn] if is_violation else [], ensure_ascii=False)
-            detail_json = json.dumps({
-                "verify_status": final_verify_status,
-                "verify_time": now_str,
-                "model_verdict": verdict_summary
-            }, ensure_ascii=False)
-
-            sql = f"""
-            UPDATE {task_table}
-            SET verify_status = %s,
-                last_verified_at = %s,
-                last_verify_detail = %s,
-                risk_level = %s,
-                risk_tags = %s,
-                risk_remark = %s,
-                updated_at = %s
-            WHERE id = %s;
-            """
-            self.execute(sql, (final_verify_status, now_str, detail_json, risk_norm, tags_json, f"AI多模态审核: {primary_cn}", now_str, domain_id))
+            if is_anomaly:
+                final_verify_status = "verified_failed"
+                eff_risk = "critical" if risk_norm == "critical" else "high"
+                tags_json = json.dumps([primary_cn], ensure_ascii=False)
+                detail_json = json.dumps({
+                    "verify_status": final_verify_status,
+                    "verify_time": now_str,
+                    "model_verdict": verdict_summary
+                }, ensure_ascii=False)
+                sql = f"""
+                UPDATE {task_table}
+                SET verify_status = 'verified_failed',
+                    last_verified_at = %s,
+                    last_verify_detail = %s,
+                    risk_level = %s,
+                    risk_tags = %s,
+                    risk_remark = %s,
+                    updated_at = %s
+                WHERE id = %s;
+                """
+                self.execute(sql, (now_str, detail_json, eff_risk, tags_json, f"AI多模态审核检出违规: {primary_cn}", now_str, domain_id))
+            else:
+                # 保持待研判
+                detail_json = json.dumps({
+                    "verify_status": "unverified",
+                    "verify_time": now_str,
+                    "model_verdict": verdict_summary
+                }, ensure_ascii=False)
+                sql = f"""
+                UPDATE {task_table}
+                SET last_verified_at = %s,
+                    last_verify_detail = %s,
+                    updated_at = %s
+                WHERE id = %s;
+                """
+                self.execute(sql, (now_str, detail_json, now_str, domain_id))
 
         else:
             # domain_tasks

@@ -281,10 +281,10 @@ async def async_main():
                             remark = f"[DNS安全拦截] {reason}"
                         else:
                             is_viol = False
-                            risk_lvl = "SAFE"
+                            risk_lvl = "pending"
                             p_cat = "dead_domain"
                             p_cn = "站点不可达 (DNS未解析)" if dns_status in ("NXDOMAIN", "NO_ANSWER") else "站点不可达"
-                            remark = f"[前置探活不可达] {reason}，自动标记合规跳过"
+                            remark = f"[前置探活不可达] {reason}，系统保持待研判记录"
 
                         dead_record = {
                             "domain": dead_dom,
@@ -308,13 +308,13 @@ async def async_main():
                         db_mgr.save_audit_result(dead_record, task_item=dead_item, sink=db_sink)
                         GLOBAL_HISTORY_MANAGER.update_checkpoint(current_job_id, dead_dom, is_dead=True)
                         if not args.quiet:
-                            tag = "[DNS安全阻断]" if is_sec_risk else "[探活跳过]"
-                            print(f"  -> {tag} 域名: {dead_dom} => {reason}，已自动持久化入库", flush=True)
+                            tag = "[DNS安全阻断]" if is_sec_risk else "[探活保持待判]"
+                            print(f"  -> {tag} 域名: {dead_dom} => {reason}，已记录审计快照 (主表状态保持: unverified)", flush=True)
 
                     tasks = alive_tasks
                     if not tasks:
                         if not args.quiet:
-                            print("[*] 本批次所有待审域名均为不可达死链，已全部自动标记并持久化入库。", flush=True)
+                            print("[*] 本批次所有待审域名均为不可达死链，已记录审计日志并保持待研判记录。", flush=True)
                         GLOBAL_HISTORY_MANAGER.finish_job(current_job_id, status="completed", message="所有目标均为死链并已跳过")
                         if not args.db_loop:
                             break
@@ -379,10 +379,15 @@ async def async_main():
                             detail_info=summ
                         )
                         if not args.quiet:
-                            r_lvl = summ.get("overall_risk_level", "SAFE")
-                            p_cat = summ.get("primary_violation_category", "normal")
-                            v_status = "verified_failed" if is_viol else "verified_clean"
-                            print(f"  -> [已回写入库] ID: {t_item['id']} | Task:{t_item['task_id']} | {t_item['domain']} => 状态: {v_status}, 等级: {r_lvl}, 分类: {p_cat}")
+                            is_anomaly = is_viol or summ.get("cloaking_suspected") or (summ.get("primary_violation_category") == "ssrf_risk")
+                            p_cat = summ.get("primary_violation_cn") or summ.get("primary_violation_category", "normal")
+                            if is_anomaly:
+                                v_status = "verified_failed"
+                                act_tag = "🚨 检出异常违规(已标记)"
+                            else:
+                                v_status = "unverified"
+                                act_tag = "⏳ 未见异常/失效(保持待研判)"
+                            print(f"  -> [{act_tag}] ID: {t_item['id']} | Task:{t_item['task_id']} | {t_item['domain']} => 状态保持/标记: {v_status}, 类别: {p_cat}")
 
                 if not args.quiet:
                     print(f"[*] 入库完成！成功同步更新 {saved_count} 条数据库域名记录。")
@@ -454,7 +459,7 @@ async def async_main():
         print("-" * 60)
         meta = batch_summary["batch_metadata"]
         print(f"[*] 批量审核完成!")
-        print(f"[*] 总数: {meta['total_urls']} | 违规: {meta['violation_urls_count']} | 正常: {meta['clean_urls_count']}")
+        print(f"[*] 巡检总数: {meta['total_urls']} | 🚨 检出异常违规: {meta['violation_urls_count']} | ⏳ 保持待研判(正常/失效): {meta['clean_urls_count']}")
         print(f"[*] 实时行流文件 (JSONL): {meta['jsonl_records_file']}")
         print(f"[*] 批量汇总文件 (JSON): {batch_summary['summary_file']}")
         print("=" * 60)

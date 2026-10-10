@@ -154,13 +154,13 @@ python compliance_checker.py --file sample_urls.txt --mock
 ### 2. 字段映射与回写机制
 - **任务读取**：从 `external_domains` 读取 `id, task_id, domain, sample_page_url, risk_level, verify_status`。
 - **目标构造**：默认构造 `https://{domain}`，亦可通过 `--target-field sample_page_url` 审查外链引用页。
-- **结果回写**：
-  - `risk_level`：映射为小写标准等级（`critical`、`high`、`medium`、`low`、`safe`）。
+- **结果回写机制 (合规安全原则)**：
+  - **🚨 检出异常违规 (违规/伪装/SSRF)**：更新 `verify_status = 'verified_failed'`，`risk_level` 标记为 `'high'` 或 `'critical'`，记录判定标签与处置说明。
+  - **⏳ 未见异常 / 404报错失效**：**严格保持待研判记录 (`verify_status = 'unverified'`, `risk_level = 'pending'`)**，严禁标记为安全（禁止写入 `verified_clean` 或 `safe`）。同时在 `verify_detail` 与 `compliance_audit_logs` 中归档多端截图与大模型视觉审查快照，便于人工复核与证据链留存。
   - `risk_tags`：格式化为包含判定类别与 Cloaking 标识的 JSON 数组（如 `["赌博博彩", "设备伪装(Cloaking)"]`）。
   - `risk_remark`：详细分析理由与设备端伪装说明。
   - `risk_source`：标记为 `'ai_compliance'`（保留用户手动判定的优先级）。
-  - `verify_status`：违规更新为 `'verified_failed'`，合规安全更新为 `'verified_clean'`。
-  - `verify_time`：当前更新时间戳。
+  - `verify_time`：记录巡检更新时间戳。
   - `verify_detail`：生成与前端弹窗 `showVerifyReport` 100% 兼容的完整证据 JSON。
   - **存证审计**：在 `compliance_audit_logs` (PostgreSQL) 与 `compliance_audit_events` (ClickHouse) 中记录多端截图哈希、模型输出及分类置信度。
 

@@ -79,8 +79,35 @@ def aggregate_device_results(url: str, device_inspections: List[Dict[str, Any]])
             highest_prob = v["max_probability"]
             primary_category = k
 
+    # HTTP 状态码与失效页面检测 (结合 HTTP 响应头与 VLM 视觉大模型识别到的 404 Not Found)
+    http_statuses = [d.get("http_status") for d in device_inspections if d.get("http_status") is not None]
+    primary_http_status = http_statuses[0] if http_statuses else None
+
+    # 提取视觉大模型对各端切片的分析结论文本
+    v_details_combined = " ".join([
+        (d.get("model_verdict", {}).get("violation_details") or "")
+        for d in device_inspections
+    ]).lower()
+
+    is_404 = any(s == 404 for s in http_statuses) or ("404" in v_details_combined) or ("not found" in v_details_combined)
+    is_http_error = any(s is not None and s >= 400 for s in http_statuses)
+
     if not has_violation:
-        primary_category = "normal"
+        if is_404:
+            primary_category = "page_not_found"
+            primary_category_cn = "页面不存在 (404)"
+            if not cloaking_notes:
+                cloaking_notes = "页面返回 404 Not Found 报错失效，未识别到违规内容，系统保持待研判。"
+        elif is_http_error:
+            primary_category = f"http_{primary_http_status}"
+            primary_category_cn = f"页面异常/失效 (HTTP {primary_http_status})"
+            if not cloaking_notes:
+                cloaking_notes = f"页面返回 HTTP {primary_http_status} 异常响应，系统保持待研判。"
+        else:
+            primary_category = "normal"
+            primary_category_cn = "未见异常 (合规/正常)"
+    else:
+        primary_category_cn = category_summary.get(primary_category, {}).get("name_cn", primary_category)
 
     has_cross_domain = any(d.get("is_cross_domain_redirect") for d in device_inspections)
     redirect_notes_list = [d.get("redirect_notes") for d in device_inspections if d.get("redirect_notes")]
@@ -90,8 +117,13 @@ def aggregate_device_results(url: str, device_inspections: List[Dict[str, Any]])
         "is_violation": has_violation,
         "overall_risk_level": highest_risk,
         "primary_violation_category": primary_category,
+        "primary_violation_cn": primary_category_cn,
         "cloaking_suspected": cloaking_detected,
         "cloaking_notes": cloaking_notes,
+        "is_404": is_404,
+        "is_http_error": is_http_error,
+        "http_status": primary_http_status,
+        "is_anomaly": has_violation or cloaking_detected,
         "cross_domain_redirect": has_cross_domain,
         "redirect_notes": cross_domain_notes,
         "category_probabilities": {
@@ -187,7 +219,11 @@ class DeviceInspectionCollector:
 
         if not has_violation:
             primary_cat = "normal"
-            details_str = "页面切片内容健康合法"
+            slice_notes = [s["verdict"].get("violation_details") for s in self.slice_results if s.get("verdict", {}).get("violation_details")]
+            if slice_notes:
+                details_str = " ; ".join(dict.fromkeys(slice_notes))
+            else:
+                details_str = "页面切片内容健康合法"
         else:
             details_str = " ; ".join(violation_reasons)
 

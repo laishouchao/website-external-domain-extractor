@@ -4,13 +4,14 @@ Directly connected to system database (PostgreSQL & ClickHouse website_domain_db
 Zero external dependencies (uses standard library http.server).
 Features:
 - Master-Detail Split View, Real-Time Database Metrics (Distinct Domain & Row Counts).
+- Strict Business Compliance Logic:
+    * Actionable anomalies (violations, cloaking, SSRF) marked and written back as verified_failed.
+    * Safe / clean / 404 / 500 error pages strictly retained as unverified (pending), never stamped safe.
 - Server-Side Filtering, Pagination, Full-Text Search.
-- In-Browser Scan Runner Control:
-    1. Dry-Run Inspection Preview (Zero resource cost).
-    2. Batch Automated Inspection (Total Distinct Domains Driven, workers=3).
-    3. Background Daemon Continuous Loop Mode (Polling DB every 15s).
-    4. Stop Running Task / Daemon.
-    5. Single Domain Instant Inspection (Inspect Now).
+- Preset Device Options: High-efficiency Dual-Device (PC Chrome + iPhone Safari) for rapid Cloaking catch,
+  plus 4-device full simulation and single PC desktop mode.
+- Interactive High-Definition Image Lightbox Modal for forensic screenshots.
+- In-Browser Scan Runner Control (Dry-Run, Single Batch, Daemon Polling, Single Domain Instant Inspect).
 - Real-Time Progress Bar & Streaming Terminal Log Drawer.
 """
 
@@ -20,6 +21,7 @@ import json
 import math
 import mimetypes
 import urllib.parse
+import urllib.request
 import subprocess
 import threading
 import collections
@@ -46,6 +48,7 @@ from history_manager import GLOBAL_HISTORY_MANAGER
 from config import AI_MODEL_PRESETS, DEFAULT_AI_CONFIG
 
 CURRENT_AI_CONFIG = dict(DEFAULT_AI_CONFIG)
+
 
 # ==============================================================================
 # Inspection Job Runner (Global Singleton for Web-Controlled Scanning)
@@ -84,7 +87,7 @@ class InspectionJobRunner:
             workers = int(config.get("workers", 3))
             batch_size = int(config.get("batch_size", 30))
             task_id = config.get("task_id")
-            devices = config.get("devices", "all")
+            devices = config.get("devices", "desktop_chrome,mobile_iphone_safari")
             loop = bool(config.get("loop", False))
             poll_interval = int(config.get("poll_interval", 15))
             mock = bool(config.get("mock", False))
@@ -205,8 +208,8 @@ class InspectionJobRunner:
                     continue
                 self._log(line_str)
 
-                # 匹配探活跳过行: -> [探活跳过] 域名: xxx 不可达...
-                if "[探活跳过]" in line_str:
+                # 匹配探活跳过行
+                if "[探活跳过]" in line_str or "[探活保持待判]" in line_str:
                     with self.lock:
                         self.stats["dead_skipped"] += 1
                         self.stats["completed"] += 1
@@ -291,7 +294,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <span>🤖</span> <span id="headerAiLabel">AI: 超级小爱 (192.168.1.190)</span>
           </span>
         </div>
-        <p class="text-xs text-slate-400 mt-1">集成 PostgreSQL (external_domains / compliance_audit_logs) 与 ClickHouse 实时全量数据 · 调度目标: 总域名库去重独立域名</p>
+        <p class="text-xs text-slate-400 mt-1">集成 PostgreSQL (external_domains / compliance_audit_logs) 与 ClickHouse 实时全量数据 · 处置规范: 仅标记异常违规，正常及404严格保持待研判</p>
       </div>
 
       <!-- Action Control Buttons -->
@@ -358,39 +361,39 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
     </header>
 
-    <!-- Metrics Cards (Real Database Data) -->
+    <!-- Metrics Cards (Real Database Data - 彻底废除合规盖章概念，聚焦违规处置与待研判池) -->
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
       <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-sm">
         <div class="text-xs font-medium text-slate-400 flex items-center justify-between">
           <span>全库独立域名 (去重)</span>
-          <span class="text-[10px] text-indigo-400/80 bg-indigo-500/10 px-1.5 py-0.5 rounded font-mono">标准口径</span>
+          <span class="text-[10px] text-indigo-400/80 bg-indigo-500/10 px-1.5 py-0.5 rounded font-mono">资产总盘</span>
         </div>
         <div id="statTotal" class="text-2xl font-black text-white mt-1">--</div>
-        <div id="statAudited" class="text-xs text-indigo-400 mt-1 truncate">全量记录: -- 条 · AI存证: -- 条</div>
+        <div id="statAudited" class="text-xs text-indigo-400 mt-1 truncate">全量记录: -- 条 · 存证事件: -- 条</div>
       </div>
       <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-sm">
         <div class="text-xs font-medium text-rose-400 flex items-center justify-between">
-          <span>检出涉险 / 违规站点</span>
-          <span class="text-[10px] text-rose-400/80 bg-rose-500/10 px-1.5 py-0.5 rounded">独立域名</span>
+          <span>🚨 已捕获异常违规</span>
+          <span class="text-[10px] text-rose-400/80 bg-rose-500/10 px-1.5 py-0.5 rounded">处置标记</span>
         </div>
         <div id="statViolations" class="text-2xl font-black text-rose-500 mt-1">--</div>
         <div id="statViolRate" class="text-xs text-rose-400/80 mt-1">违规占比: --%</div>
       </div>
       <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-sm">
         <div class="text-xs font-medium text-amber-400 flex items-center justify-between">
-          <span>设备端伪装 (Cloaking)</span>
+          <span>🎭 隐蔽设备伪装 (Cloaking)</span>
           <span class="text-[10px] text-amber-400/80 bg-amber-500/10 px-1.5 py-0.5 rounded">深度识别</span>
         </div>
         <div id="statCloaking" class="text-2xl font-black text-amber-500 mt-1">--</div>
-        <div class="text-xs text-amber-400/80 mt-1">PC正常但移动端违规</div>
+        <div class="text-xs text-amber-400/80 mt-1">PC端正常但移动端违规</div>
       </div>
       <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-sm">
-        <div class="text-xs font-medium text-emerald-400 flex items-center justify-between">
-          <span>健康合规域名</span>
-          <span class="text-[10px] text-emerald-400/80 bg-emerald-500/10 px-1.5 py-0.5 rounded">独立域名</span>
+        <div class="text-xs font-medium text-sky-400 flex items-center justify-between">
+          <span>⏳ 待研判资产池 (保留状态)</span>
+          <span class="text-[10px] text-sky-400/80 bg-sky-500/10 px-1.5 py-0.5 rounded">未裁定安全</span>
         </div>
-        <div id="statClean" class="text-2xl font-black text-emerald-500 mt-1">--</div>
-        <div id="statPending" class="text-xs text-slate-400 mt-1 truncate">待研判域名: -- 条</div>
+        <div id="statPending" class="text-2xl font-black text-sky-400 mt-1">--</div>
+        <div id="statPendingSub" class="text-xs text-slate-400 mt-1 truncate">已探查待判: -- 条 · 404失效: -- 条</div>
       </div>
     </div>
 
@@ -403,10 +406,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           <span class="font-bold text-slate-200">数据库审查存证清单</span>
           <div class="flex flex-wrap gap-1">
             <button onclick="setFilter('all')" id="btnFilterAll" class="filter-btn px-2.5 py-1 rounded text-xs font-medium bg-slate-700 text-white">全部 <span id="cntAll" class="opacity-75 text-[10px]"></span></button>
-            <button onclick="setFilter('violation')" id="btnFilterViol" class="filter-btn px-2.5 py-1 rounded text-xs font-medium text-slate-400 hover:text-white">违规 <span id="cntViol" class="opacity-75 text-[10px]"></span></button>
-            <button onclick="setFilter('cloaking')" id="btnFilterCloak" class="filter-btn px-2.5 py-1 rounded text-xs font-medium text-slate-400 hover:text-white">伪装 <span id="cntCloak" class="opacity-75 text-[10px]"></span></button>
-            <button onclick="setFilter('clean')" id="btnFilterClean" class="filter-btn px-2.5 py-1 rounded text-xs font-medium text-slate-400 hover:text-white">合规 <span id="cntClean" class="opacity-75 text-[10px]"></span></button>
-            <button onclick="setFilter('pending')" id="btnFilterPending" class="filter-btn px-2.5 py-1 rounded text-xs font-medium text-slate-400 hover:text-white">待研判 <span id="cntPending" class="opacity-75 text-[10px]"></span></button>
+            <button onclick="setFilter('violation')" id="btnFilterViol" class="filter-btn px-2.5 py-1 rounded text-xs font-medium text-slate-400 hover:text-white">🚨 违规 <span id="cntViol" class="opacity-75 text-[10px]"></span></button>
+            <button onclick="setFilter('cloaking')" id="btnFilterCloak" class="filter-btn px-2.5 py-1 rounded text-xs font-medium text-slate-400 hover:text-white">🎭 伪装 <span id="cntCloak" class="opacity-75 text-[10px]"></span></button>
+            <button onclick="setFilter('pending')" id="btnFilterPending" class="filter-btn px-2.5 py-1 rounded text-xs font-medium text-slate-400 hover:text-white">⏳ 待研判 <span id="cntPending" class="opacity-75 text-[10px]"></span></button>
+            <button onclick="setFilter('error_pages')" id="btnFilterError" class="filter-btn px-2.5 py-1 rounded text-xs font-medium text-slate-400 hover:text-white">⚠️ 404失效 <span id="cntError" class="opacity-75 text-[10px]"></span></button>
           </div>
         </div>
 
@@ -427,7 +430,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           <div class="flex items-center gap-1 shrink-0">
             <button onclick="changePage(1)" id="btnFirstPage" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 disabled:pointer-events-none text-[11px]" title="首页">⏮</button>
             <button onclick="changePage(currentPage - 1)" id="btnPrevPage" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 disabled:pointer-events-none text-[11px]" title="上一页">◀ 上页</button>
-            <button onclick="changePage(currentPage + 1)" id="btnNextPage" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 disabled:pointer-events-none text-[11px]" title="下一页">下页 ▶</button>
+            <button onclick="changePage(currentPage + 1)" id="btnNextPage" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 disabled:pointer-events-none text-[11px]" title="下页">下页 ▶</button>
             <button onclick="changePage(totalPages)" id="btnLastPage" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 disabled:pointer-events-none text-[11px]" title="末页">⏭</button>
           </div>
         </div>
@@ -455,7 +458,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <span class="text-xs text-slate-400 block">主违规分类</span>
               <span id="detailPrimary" class="text-sm font-bold text-indigo-400">normal</span>
               <div>
-                <button onclick="inspectCurrentDomain()" id="btnInspectSingle" class="mt-1 px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition shadow-sm">
+                <button onclick="inspectCurrentDomain()" id="btnInspectSingle" class="mt-1 px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition shadow-sm" title="即刻调用浏览器与视觉大模型对该域名进行双端研判存证">
                   <span>⚡</span> 立即研判此域名
                 </button>
               </div>
@@ -479,8 +482,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
           <!-- Multi-Device Slices & Forensics Screenshots -->
           <div>
-            <div class="text-xs font-semibold text-slate-300 mb-2.5 flex items-center gap-1.5">
-              <span>📱</span> 多端仿真与存证切片截图 (100% 原始视口高清)
+            <div class="text-xs font-semibold text-slate-300 mb-2.5 flex items-center justify-between">
+              <span class="flex items-center gap-1.5">
+                <span>📱</span> 多端仿真与存证切片截图 (100% 原始视口高清)
+              </span>
+              <span class="text-[11px] text-slate-400">点击任意图片可放大查看原图</span>
             </div>
             <div id="detailSlicesContainer" class="space-y-3">
               <!-- Slices & Screenshots -->
@@ -540,6 +546,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </div>
 
         <div class="space-y-4 text-xs">
+          <!-- Policy Reminder Banner -->
+          <div class="p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/30 text-indigo-300 leading-relaxed text-[11px]">
+            🛡️ <strong>合规风控处置规范：</strong> 系统仅对检出确凿违规、设备端伪装 (Cloaking) 或 SSRF 阻断的域名回写标记 <code>verified_failed</code>；所有未见异常与 404 报错失效站点均严格保持待研判记录 (unverified)，绝不盖章为“安全”。
+          </div>
+
           <!-- Mode Indicator -->
           <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
             <span class="text-slate-300 font-medium">执行模式:</span>
@@ -654,23 +665,33 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div id="aiTestResultBanner" class="hidden text-[11px] px-2.5 py-1 rounded bg-slate-900 border font-mono"></div>
           </div>
 
-          <!-- Devices Selection -->
+          <!-- Devices Selection (包含推荐双端比对方案) -->
           <div>
-            <label class="block text-slate-300 font-semibold mb-1.5">多端仿真设备范围 (--devices):</label>
-            <div class="grid grid-cols-2 gap-2 text-[11px]">
-              <label class="flex items-center gap-2 p-2 rounded bg-slate-800/80 cursor-pointer">
-                <input type="checkbox" id="devChrome" checked class="rounded text-indigo-600"> <span>💻 桌面 PC Chrome</span>
+            <label class="block text-slate-300 font-semibold mb-1.5">仿真设备选型 (--devices):</label>
+            <div class="grid grid-cols-1 gap-2 text-[11px]">
+              <label class="flex items-center gap-2 p-2 rounded bg-indigo-950/40 border border-indigo-500/40 cursor-pointer">
+                <input type="radio" name="devPreset" id="devPresetDual" checked onchange="applyDevPreset('dual')" class="text-indigo-600">
+                <div>
+                  <span class="font-bold text-indigo-300">⚡ 双端比对巡检 (PC Chrome + iPhone Safari，高效率防 Cloaking，推荐)</span>
+                  <span class="block text-[10px] text-slate-400">耗时减少 60%，兼顾桌面正常与移动端违规伪装捕获</span>
+                </div>
               </label>
-              <label class="flex items-center gap-2 p-2 rounded bg-slate-800/80 cursor-pointer">
-                <input type="checkbox" id="devMac" checked class="rounded text-indigo-600"> <span>🍏 视网膜 Mac Safari</span>
+              <label class="flex items-center gap-2 p-2 rounded bg-slate-900 border border-slate-800 cursor-pointer">
+                <input type="radio" name="devPreset" id="devPresetAll" onchange="applyDevPreset('all')" class="text-indigo-600">
+                <div>
+                  <span class="font-bold text-slate-300">📱 4端全量仿真 (桌面PC + Mac + 苹果iPhone + 安卓Chrome)</span>
+                  <span class="block text-[10px] text-slate-400">全设备视口留存，极度严苛场景适用</span>
+                </div>
               </label>
-              <label class="flex items-center gap-2 p-2 rounded bg-slate-800/80 cursor-pointer">
-                <input type="checkbox" id="devIphone" checked class="rounded text-indigo-600"> <span>📱 苹果 iPhone (Cloaking识别)</span>
-              </label>
-              <label class="flex items-center gap-2 p-2 rounded bg-slate-800/80 cursor-pointer">
-                <input type="checkbox" id="devAndroid" checked class="rounded text-indigo-600"> <span>🤖 安卓 Android Chrome</span>
+              <label class="flex items-center gap-2 p-2 rounded bg-slate-900 border border-slate-800 cursor-pointer">
+                <input type="radio" name="devPreset" id="devPresetPC" onchange="applyDevPreset('pc')" class="text-indigo-600">
+                <div>
+                  <span class="font-bold text-slate-300">💻 桌面 PC 单端极速模式</span>
+                  <span class="block text-[10px] text-slate-400">仅截取桌面端首屏视口，吞吐量最高</span>
+                </div>
               </label>
             </div>
+            <input type="hidden" id="selectedDevicesValue" value="desktop_chrome,mobile_iphone_safari">
           </div>
 
           <!-- Advanced Options -->
@@ -700,6 +721,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <span>🚀</span> 立即启动巡检
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Interactive Screenshot Lightbox Modal (点击大图灯箱预览) -->
+    <div id="imageModal" class="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center hidden p-4" onclick="closeImageModal()">
+      <div class="relative max-w-5xl w-full max-h-[92vh] flex flex-col bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl" onclick="event.stopPropagation()">
+        <!-- Modal Top Bar -->
+        <div class="p-3 bg-slate-950/80 border-b border-slate-800 flex justify-between items-center text-xs">
+          <div class="flex items-center gap-2">
+            <span class="text-base">🖼️</span>
+            <span id="imageModalTitle" class="font-bold text-white">截图取证查看</span>
+            <span id="imageModalHash" class="font-mono text-[10px] text-indigo-400 bg-slate-800 px-2 py-0.5 rounded truncate max-w-xs"></span>
+          </div>
+          <div class="flex items-center gap-2">
+            <a id="imageModalDirectLink" href="#" target="_blank" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold transition">新标签打开 ↗</a>
+            <button onclick="closeImageModal()" class="p-1 text-slate-400 hover:text-white text-lg">✕</button>
+          </div>
+        </div>
+        <!-- Modal Image Body -->
+        <div class="flex-1 overflow-auto p-4 flex items-center justify-center bg-black/70">
+          <img id="imageModalImg" src="" alt="取证截图大图" class="max-w-full max-h-[78vh] object-contain rounded border border-slate-800 shadow-lg">
         </div>
       </div>
     </div>
@@ -788,23 +831,23 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         if (json.metrics) {
           const m = json.metrics;
           document.getElementById('statTotal').innerText = (m.total || 0).toLocaleString();
-          document.getElementById('statAudited').innerText = `全量记录: ${(m.total_rows || 0).toLocaleString()} 条 · AI存证: ${(m.audited_count || 0).toLocaleString()} 条`;
+          document.getElementById('statAudited').innerText = `全量记录: ${(m.total_rows || 0).toLocaleString()} 条 · 存证事件: ${(m.audited_count || 0).toLocaleString()} 条`;
           document.getElementById('statViolations').innerText = (m.violations || 0).toLocaleString();
           document.getElementById('statCloaking').innerText = (m.cloaking || 0).toLocaleString();
-          document.getElementById('statClean').innerText = (m.clean || 0).toLocaleString();
-          document.getElementById('statPending').innerText = `待研判域名: ${(m.pending || 0).toLocaleString()} 条`;
+          document.getElementById('statPending').innerText = (m.pending || 0).toLocaleString();
+          document.getElementById('statPendingSub').innerText = `已探查待判: ${(m.inspected_pending || 0).toLocaleString()} 条 · 404失效: ${(m.error_pages || 0).toLocaleString()} 条`;
 
           const total = m.total || 1;
           const viols = m.violations || 0;
           const rate = ((viols / total) * 100).toFixed(2);
-          document.getElementById('statViolRate').innerText = `违规占比: ${rate}%`;
+          document.getElementById('statViolRate').innerText = `违规占比: ${rate}% · 严格定性回写`;
 
           // 填充筛选按钮数字
           document.getElementById('cntAll').innerText = `(${m.total || 0})`;
           document.getElementById('cntViol').innerText = `(${m.violations || 0})`;
           document.getElementById('cntCloak').innerText = `(${m.cloaking || 0})`;
-          document.getElementById('cntClean').innerText = `(${m.clean || 0})`;
           document.getElementById('cntPending').innerText = `(${m.pending || 0})`;
+          document.getElementById('cntError').innerText = `(${m.error_pages || 0})`;
         }
 
         // 2. 更新分页信息
@@ -860,8 +903,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         'all': 'btnFilterAll',
         'violation': 'btnFilterViol',
         'cloaking': 'btnFilterCloak',
-        'clean': 'btnFilterClean',
-        'pending': 'btnFilterPending'
+        'pending': 'btnFilterPending',
+        'error_pages': 'btnFilterError'
       }[filter];
       if (activeBtn) {
         document.getElementById(activeBtn).className = 'filter-btn px-2.5 py-1 rounded text-xs font-medium bg-slate-700 text-white';
@@ -896,23 +939,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const sum = item.verdict_summary || {};
         const isViol = sum.is_violation;
         const isCloak = sum.cloaking_suspected;
+        const is404 = item.is_404 || sum.is_404 || sum.primary_violation_category === 'page_not_found';
+        const isInspected = item.is_inspected || !!item.verify_time;
         const domain = item.domain || (item.url || '').replace(/https?:\\/\\//, '').split('/')[0];
-        const riskLevel = (sum.overall_risk_level || 'PENDING').toUpperCase();
 
         let violBadge = '';
         if (isViol) {
-          violBadge = '<span class="text-[10px] font-bold text-rose-400 bg-rose-500/20 border border-rose-500/30 px-1.5 py-0.5 rounded">违规</span>';
-        } else if (riskLevel === 'SAFE') {
-          violBadge = '<span class="text-[10px] font-bold text-emerald-400 bg-emerald-500/20 border border-emerald-500/30 px-1.5 py-0.5 rounded">合规</span>';
+          violBadge = '<span class="text-[10px] font-bold text-rose-400 bg-rose-500/20 border border-rose-500/30 px-1.5 py-0.5 rounded">🚨 违规</span>';
+        } else if (is404) {
+          violBadge = '<span class="text-[10px] font-bold text-amber-400 bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 rounded">⚠️ 404失效</span>';
+        } else if (isInspected) {
+          violBadge = '<span class="text-[10px] font-bold text-sky-400 bg-sky-500/20 border border-sky-500/30 px-1.5 py-0.5 rounded">⏳ 待判(正常)</span>';
         } else {
-          violBadge = '<span class="text-[10px] font-bold text-amber-400 bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 rounded">待判</span>';
+          violBadge = '<span class="text-[10px] font-bold text-slate-400 bg-slate-800 border border-slate-700 px-1.5 py-0.5 rounded">⏳ 待研判</span>';
         }
 
         const cloakBadge = isCloak 
-          ? '<span class="text-[10px] font-bold text-amber-400 bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 rounded">伪装</span>' : '';
+          ? '<span class="text-[10px] font-bold text-amber-400 bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 rounded">🎭 伪装</span>' : '';
 
         const refInfo = item.ref_count ? `<span class="text-[10px] text-slate-500 font-mono" title="全库关联记录数">关联:${item.ref_count}条</span>` : '';
-
         const timeStr = item.checked_at ? item.checked_at.substring(0, 19).replace('T', ' ') : '尚未审查';
 
         return `
@@ -957,19 +1002,24 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
       const sum = r.verdict_summary || {};
       const isViol = sum.is_violation;
-      const risk = (sum.overall_risk_level || 'PENDING').toUpperCase();
+      const is404 = r.is_404 || sum.is_404 || sum.primary_violation_category === 'page_not_found';
+      const isInspected = r.is_inspected || !!r.verify_time;
+      const risk = (sum.overall_risk_level || (isViol ? 'HIGH' : 'PENDING')).toUpperCase();
 
-      // 状态徽章
+      // 状态徽章 (严格区分违规、404报错、正常待判、待审查)
       const vBadge = document.getElementById('detailBadge');
       if (isViol) {
         vBadge.className = "badge bg-rose-500/20 text-rose-400 border border-rose-500/30";
-        vBadge.innerText = "检出违规风险 (Violation)";
-      } else if (risk === 'SAFE') {
-        vBadge.className = "badge bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
-        vBadge.innerText = "合规安全 (Verified Clean)";
-      } else {
+        vBadge.innerText = "🚨 检出违规处置 (verified_failed)";
+      } else if (is404) {
         vBadge.className = "badge bg-amber-500/20 text-amber-400 border border-amber-500/30";
-        vBadge.innerText = "待研判 / 未审查 (Pending)";
+        vBadge.innerText = "⚠️ 页面404/失效报错 (保持待研判)";
+      } else if (isInspected) {
+        vBadge.className = "badge bg-sky-500/20 text-sky-400 border border-sky-500/30";
+        vBadge.innerText = "⏳ 视觉巡检未见异常 (保持待研判)";
+      } else {
+        vBadge.className = "badge bg-slate-800 text-slate-400 border border-slate-700";
+        vBadge.innerText = "⏳ 待研判 / 未审查 (Pending)";
       }
 
       const riskColorMap = {
@@ -1005,7 +1055,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         dnsHtml = `
           <div class="mt-2.5 pt-2 border-t border-slate-700/60 text-xs flex flex-wrap items-center gap-2">
             <span class="text-indigo-400 font-semibold flex items-center gap-1">
-              <span>🌐</span> DNS 预检:
+              <span>🌐</span> DNS 预检情报:
             </span>
             ${dnsStatus ? `<span class="px-1.5 py-0.5 rounded font-mono text-[11px] border ${tagBg}">${dnsStatus}</span>` : ''}
             ${dnsIps.length > 0 ? `<span class="text-slate-300 font-mono">解析IP: <strong class="text-sky-300">${dnsIps.join(', ')}</strong></span>` : ''}
@@ -1014,24 +1064,55 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         `;
       }
 
-      // 研判依据说明
+      // 研判依据说明框
       const notesBox = document.getElementById('detailNotesBox');
-      if (risk === 'PENDING') {
+      if (isViol) {
+        notesBox.innerHTML = `
+          <div class="flex items-start gap-2">
+            <span class="text-rose-400 text-base">🚨</span>
+            <div>
+              <strong class="text-rose-300">【检出涉险违规内容】</strong> ${escapeHtml(sum.cloaking_notes || r.risk_remark || "页面多端视觉识别到违规违法内容，已回写处置标记。")}<br>
+              <div class="mt-1 text-slate-400">已自动回写主表状态为 <code>verified_failed</code>，风险等级标记为 HIGH/CRITICAL。</div>
+            </div>
+          </div>
+          ${dnsHtml}
+        `;
+      } else if (is404) {
         notesBox.innerHTML = `
           <div class="flex items-start gap-2">
             <span class="text-amber-400 text-base">⚠️</span>
             <div>
-              <strong class="text-amber-300">【待研判总库域名】</strong> 该外部域名尚未进行多端仿真与视觉大模型安全深度巡检。<br>
-              <div class="mt-1 text-slate-400">
-                ${r.sample_page_url ? `<strong>采样引用页:</strong> <a href="${r.sample_page_url}" target="_blank" class="text-indigo-400 hover:underline break-all">${r.sample_page_url}</a><br>` : ''}
-                <strong>一键研判:</strong> 点击右上角【⚡ 立即研判此域名】或顶部【启动单批巡检】即可开始审查，检测结果将自动同步该域名在全库中的所有历史记录。
-              </div>
+              <strong class="text-amber-300">【页面 404 Not Found / 报错失效】</strong> ${escapeHtml(sum.cloaking_notes || r.risk_remark || "页面返回 404 Not Found 或不可达状态。")}<br>
+              <div class="mt-1 text-slate-400"><strong>业务处置规范：</strong> 404/报错页面不代表合规安全，系统严格保持待研判记录 (unverified)，同时留存多端视觉快照供人工复核。</div>
+            </div>
+          </div>
+          ${dnsHtml}
+        `;
+      } else if (isInspected) {
+        notesBox.innerHTML = `
+          <div class="flex items-start gap-2">
+            <span class="text-sky-400 text-base">⏳</span>
+            <div>
+              <strong class="text-sky-300">【视觉大模型审查未见涉敏违规】</strong> ${escapeHtml(sum.cloaking_notes || r.risk_remark || "页面各端多模态视觉切片未识别到违规内容。")}<br>
+              <div class="mt-1 text-slate-400"><strong>业务处置规范：</strong> 遵循安全风控规范，未见异常站点保持待研判记录 (unverified)，不予盲目盖章“安全”，仅记录审计快照。</div>
             </div>
           </div>
           ${dnsHtml}
         `;
       } else {
-        notesBox.innerHTML = `<div><strong>研判依据与特征：</strong> ${sum.cloaking_notes || r.risk_remark || "页面各端展示一致，未识别到违规及伪装特征。"}</div>${dnsHtml}`;
+        notesBox.innerHTML = `
+          <div class="flex items-start gap-2">
+            <span class="text-slate-400 text-base">⏳</span>
+            <div>
+              <strong class="text-slate-300">【待研判外部域名】</strong> 该外部域名尚未执行多端仿真截屏与视觉模型深度审核。<br>
+              <div class="mt-1 text-slate-400">
+                ${r.sample_page_url ? `<strong>采样引用页:</strong> <a href="${r.sample_page_url}" target="_blank" class="text-indigo-400 hover:underline break-all">${r.sample_page_url}</a><br>` : ''}
+                可点击右上角【⚡ 立即研判此域名】或顶部【启动单批巡检】快速执行。
+              </div>
+            </div>
+          </div>
+          ${dnsHtml}
+        `;
       }
 
       // 6 大分类概率矩阵
@@ -1081,34 +1162,38 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
 
       slicesContainer.innerHTML = devs.map(d => {
-        const slices = d.slices_audited || [];
+        const slices = d.slices || d.slices_audited || [];
         const isDevViol = d.is_violation;
+        const httpBadge = d.http_status ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-mono border ${d.http_status >= 400 ? 'bg-rose-950/80 text-rose-300 border-rose-800' : 'bg-slate-800 text-emerald-400 border-slate-700'}">HTTP ${d.http_status}</span>` : '';
 
         const sliceCards = slices.map(s => {
-          let filename = s.screenshot_path ? s.screenshot_path.split(/[\\\\/]/).pop() : '';
+          let filename = s.screenshot_path ? s.screenshot_path.split(/[\\\\/]/).pop() : (s.screenshot_file ? s.screenshot_file.split(/[\\\\/]/).pop() : '');
           let imgTag = '';
+          const sha = s.screenshot_sha256 || s.screenshot_hash || '';
           if (filename) {
             const imgUrl = `/screenshots/${encodeURIComponent(filename)}`;
             imgTag = `
-              <div class="mt-2 rounded overflow-hidden border border-slate-800 bg-black/40">
-                <a href="${imgUrl}" target="_blank" title="点击查看大图">
-                  <img src="${imgUrl}" class="w-full h-32 object-cover object-top hover:opacity-90 transition" onerror="this.parentElement.innerHTML='<div class=\\'text-[11px] text-slate-600 p-2\\'>截图文件未在本地暂存</div>'">
-                </a>
+              <div class="mt-2 rounded overflow-hidden border border-slate-800 bg-black/40 group relative cursor-pointer" onclick="openImageModal('${imgUrl}', '${d.device_name} - ${s.slice_name || s.slice_id}', '${sha}')">
+                <img src="${imgUrl}" class="w-full h-32 object-cover object-top group-hover:scale-105 transition duration-200" onerror="this.parentElement.innerHTML='<div class=\\'text-[11px] text-slate-600 p-2\\'>截图文件未在本地暂存</div>'">
+                <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white text-xs font-semibold">
+                  🔍 点击放大原图
+                </div>
               </div>
             `;
           }
 
-          const isSliceViol = s.verdict?.is_violation;
+          const isSliceViol = (s.verdict && s.verdict.is_violation) || s.is_violation;
+          const desc = (s.verdict && s.verdict.violation_details) || s.violation_details || '无异常描述';
           return `
             <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-3 space-y-1">
               <div class="flex justify-between items-center text-xs">
-                <span class="font-bold text-slate-200">${s.slice_name || s.slice_id}</span>
+                <span class="font-bold text-slate-200">${s.slice_name || s.slice_id || '视口切片'}</span>
                 <span class="badge ${isSliceViol ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'}">
-                  ${isSliceViol ? '切片检出违规' : '切片安全'}
+                  ${isSliceViol ? '切片检出违规' : '切片未见违规'}
                 </span>
               </div>
-              <div class="text-[11px] text-slate-400">${s.verdict?.violation_details || '无异常描述'}</div>
-              <div class="text-[10px] font-mono text-slate-500 truncate" title="${s.screenshot_sha256}">SHA256: ${s.screenshot_sha256 ? s.screenshot_sha256.substring(0, 24) + '...' : '-'}</div>
+              <div class="text-[11px] text-slate-400">${desc}</div>
+              <div class="text-[10px] font-mono text-slate-500 truncate" title="${sha}">SHA256: ${sha ? sha.substring(0, 24) + '...' : '-'}</div>
               ${imgTag}
             </div>
           `;
@@ -1117,12 +1202,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         return `
           <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-2">
             <div class="flex justify-between items-center">
-              <div>
+              <div class="flex items-center gap-2">
                 <span class="font-bold text-white text-xs">${d.device_name || d.device_id}</span>
-                <span class="text-[11px] text-slate-400 ml-2">视口: ${d.viewport?.width}x${d.viewport?.height}</span>
+                ${httpBadge}
+                ${d.viewport ? `<span class="text-[11px] text-slate-400 font-mono">${d.viewport.width}x${d.viewport.height}</span>` : ''}
               </div>
               <span class="badge ${isDevViol ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'}">
-                ${isDevViol ? '设备端违规' : '设备端安全'}
+                ${isDevViol ? '设备端检出违规' : '设备端未见违规'}
               </span>
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -1134,7 +1220,31 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     // ==========================================
-    // 2. Scan Runner Control & Live Logs
+    // 2. Interactive Image Lightbox Modal
+    // ==========================================
+    function openImageModal(imgUrl, title, sha) {
+      document.getElementById('imageModalImg').src = imgUrl;
+      document.getElementById('imageModalTitle').innerText = title || '取证截图';
+      document.getElementById('imageModalHash').innerText = sha ? `SHA256: ${sha}` : '';
+      document.getElementById('imageModalDirectLink').href = imgUrl;
+      document.getElementById('imageModal').classList.remove('hidden');
+    }
+
+    function closeImageModal() {
+      document.getElementById('imageModal').classList.add('hidden');
+      document.getElementById('imageModalImg').src = '';
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeImageModal();
+        closeConfigModal();
+        closeHistoryDrawer();
+      }
+    });
+
+    // ==========================================
+    // 3. Scan Runner Control & Live Logs
     // ==========================================
     function selectAiPreset(presetId) {
       const banner = document.getElementById('aiTestResultBanner');
@@ -1143,6 +1253,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         document.getElementById('cfgAiBase').value = 'http://192.168.1.190:8787/v1';
         document.getElementById('cfgAiModel').value = 'XiaoAi';
         document.getElementById('headerAiLabel').innerText = 'AI: 超级小爱 (192.168.1.190)';
+      }
+    }
+
+    function applyDevPreset(mode) {
+      const el = document.getElementById('selectedDevicesValue');
+      if (mode === 'dual') {
+        el.value = 'desktop_chrome,mobile_iphone_safari';
+      } else if (mode === 'all') {
+        el.value = 'desktop_chrome,desktop_safari,mobile_iphone_safari,mobile_android_chrome';
+      } else if (mode === 'pc') {
+        el.value = 'desktop_chrome';
       }
     }
 
@@ -1208,9 +1329,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     function setPollInterval(sec) {
       chosenPollInterval = sec;
       document.querySelectorAll('.interval-btn').forEach(b => {
-        b.className = 'interval-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700';
+        b.className = 'interval-btn px-2.5 py-0.5 rounded bg-slate-800 border border-slate-700';
       });
-      event.target.className = 'interval-btn px-2 py-0.5 rounded bg-indigo-600 text-white font-bold';
+      event.target.className = 'interval-btn px-2.5 py-0.5 rounded bg-indigo-600 text-white font-bold';
     }
 
     function toggleLogConsole() {
@@ -1231,7 +1352,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('terminalLogs').innerHTML = '<div class="text-slate-500">[控制台日志已清空]</div>';
     }
 
-    // 快捷执行预检模式 (Dry Run)
     async function runDryRun() {
       if (!isConsoleExpanded) toggleLogConsole();
       try {
@@ -1255,7 +1375,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
     }
 
-    // 导出菜单切换
     function toggleExportMenu() {
       const menu = document.getElementById('exportMenu');
       if (menu) menu.classList.toggle('hidden');
@@ -1281,7 +1400,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
     }
 
-    // 历史抽屉管理
     function openHistoryDrawer() {
       document.getElementById('historyDrawerModal').classList.remove('hidden');
       loadHistoryJobs();
@@ -1382,14 +1500,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const mock = document.getElementById('cfgMock').checked;
       const enableProbe = document.getElementById('cfgProbe') ? document.getElementById('cfgProbe').checked : true;
       const enableDnsProbe = document.getElementById('cfgDnsProbe') ? document.getElementById('cfgDnsProbe').checked : true;
-
-      // 设备端拼装
-      const devs = [];
-      if (document.getElementById('devChrome').checked) devs.push('desktop_chrome');
-      if (document.getElementById('devMac').checked) devs.push('desktop_safari');
-      if (document.getElementById('devIphone').checked) devs.push('mobile_iphone_safari');
-      if (document.getElementById('devAndroid').checked) devs.push('mobile_android_chrome');
-      const devices = devs.length > 0 ? devs.join(',') : 'all';
+      const devices = document.getElementById('selectedDevicesValue').value || 'desktop_chrome,mobile_iphone_safari';
 
       const aiBase = document.getElementById('cfgAiBase') ? document.getElementById('cfgAiBase').value.trim() : '';
       const aiModel = document.getElementById('cfgAiModel') ? document.getElementById('cfgAiModel').value.trim() : '';
@@ -1450,7 +1561,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const btn = document.getElementById('btnInspectSingle');
       const origText = btn.innerHTML;
       btn.disabled = true;
-      btn.innerHTML = '<span>⏳</span> 正在仿真巡检中...';
+      btn.innerHTML = '<span>⏳</span> 正在双端仿真研判中...';
 
       if (!isConsoleExpanded) toggleLogConsole();
 
@@ -1466,7 +1577,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             workers: 1,
             batch_size: 1,
             domain_filter: r.domain,
-            devices: 'all',
+            devices: 'desktop_chrome,mobile_iphone_safari',
             api_base: aiBase,
             model: aiModel,
             api_key: aiKey
@@ -1476,10 +1587,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         if (res.success) {
           startStatusPolling();
         } else {
-          alert('启动单域名巡检失败: ' + res.message);
+          alert('启动单域名研判失败: ' + res.message);
         }
       } catch (e) {
-        alert('请求单域名巡检异常: ' + e.message);
+        alert('请求单域名研判异常: ' + e.message);
       } finally {
         setTimeout(() => {
           btn.disabled = false;
@@ -1552,7 +1663,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           document.getElementById('miniProgressText').innerText = stats.message || '空闲待命中';
 
           if (isRunnerActive && !isRunning) {
-            // 从运行切到结束，自动静默刷新大屏数据
             refreshData();
           }
         }
@@ -1564,11 +1674,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           const logContainer = document.getElementById('terminalLogs');
           const html = logs.map(l => {
             let color = 'text-emerald-400/90';
-            if (l.includes('[违规!]') || l.includes('CRITICAL') || l.includes('HIGH') || l.includes('失败') || l.includes('异常')) {
+            if (l.includes('[违规!]') || l.includes('CRITICAL') || l.includes('HIGH') || l.includes('失败') || l.includes('异常') || l.includes('检出异常违规')) {
               color = 'text-rose-400 font-semibold';
-            } else if (l.includes('[正常]') || l.includes('SAFE') || l.includes('合规')) {
-              color = 'text-emerald-400';
-            } else if (l.includes('Cloaking') || l.includes('伪装') || l.includes('警告')) {
+            } else if (l.includes('保持待研判') || l.includes('未见异常')) {
+              color = 'text-sky-400';
+            } else if (l.includes('Cloaking') || l.includes('伪装') || l.includes('警告') || l.includes('404')) {
               color = 'text-amber-400 font-bold';
             } else if (l.includes('【预检模式') || l.includes('休眠') || l.includes('监听')) {
               color = 'text-amber-300';
@@ -1584,7 +1694,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
         if (!isRunning && statusPollInterval) {
           clearInterval(statusPollInterval);
-          statusPollInterval = setInterval(pollJobStatus, 3000); // 降频心跳
+          statusPollInterval = setInterval(pollJobStatus, 3000);
         }
 
       } catch (e) {
@@ -1593,7 +1703,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     function escapeHtml(str) {
-      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
     window.onload = () => {
@@ -1874,8 +1984,9 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
             "audited_count": 0,
             "violations": 0,
             "cloaking": 0,
-            "clean": 0,
-            "pending": 0
+            "pending": 0,
+            "inspected_pending": 0,
+            "error_pages": 0
         }
         total_count = 0
 
@@ -1883,14 +1994,15 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
             pg = get_db_mgr().pg_client
             if pg:
                 if include_metrics:
-                    # 1. 查询全库宏观真实统计数据（按去重独立域名口径与主项目完全对齐）
+                    # 1. 查询全库真实宏观统计数据（按去重独立域名口径）
                     stats_rows = pg.query("""
                         SELECT 
                             count(distinct domain) as total_domains,
                             count(*) as total_rows,
                             count(distinct domain) FILTER (WHERE risk_level IN ('high', 'critical') OR verify_status = 'verified_failed') as viol_domains,
-                            count(distinct domain) FILTER (WHERE (risk_level = 'safe' OR verify_status = 'verified_clean') AND risk_level NOT IN ('high', 'critical') AND verify_status != 'verified_failed') as clean_domains,
-                            count(distinct domain) FILTER (WHERE (risk_level = 'pending' OR verify_status = 'unverified') AND risk_level NOT IN ('high', 'critical', 'safe') AND verify_status NOT IN ('verified_failed', 'verified_clean')) as pending_domains
+                            count(distinct domain) FILTER (WHERE (verify_status = 'unverified' OR risk_level = 'pending') AND risk_level NOT IN ('high', 'critical') AND verify_status != 'verified_failed') as pending_domains,
+                            count(distinct domain) FILTER (WHERE (verify_status = 'unverified' OR risk_level = 'pending') AND verify_time IS NOT NULL AND risk_level NOT IN ('high', 'critical') AND verify_status != 'verified_failed') as inspected_pending_domains,
+                            count(distinct domain) FILTER (WHERE (verify_detail::text ILIKE '%404%' OR verify_detail::text ILIKE '%page_not_found%' OR verify_detail::text ILIKE '%dead_domain%')) as error_domains
                         FROM external_domains;
                     """)
                     if stats_rows:
@@ -1898,8 +2010,9 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                         metrics["total"] = int(r.get("total_domains") or 0)
                         metrics["total_rows"] = int(r.get("total_rows") or 0)
                         metrics["violations"] = int(r.get("viol_domains") or 0)
-                        metrics["clean"] = int(r.get("clean_domains") or 0)
                         metrics["pending"] = int(r.get("pending_domains") or 0)
+                        metrics["inspected_pending"] = int(r.get("inspected_pending_domains") or 0)
+                        metrics["error_pages"] = int(r.get("error_domains") or 0)
 
                     # 2. 查询 compliance_audit_logs 审计日志统计
                     audit_stats = pg.query("""
@@ -1970,6 +2083,8 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                             "model_used": log.get("model_used") or "XiaoAi",
                             "checked_at": str(log.get("checked_at") or ""),
                             "source": "compliance_audit_logs",
+                            "is_inspected": True,
+                            "is_404": bool(rep_summ.get("is_404")),
                             "verdict_summary": verdict_summary,
                             "device_inspections": rep.get("device_inspections", [])
                         })
@@ -1981,10 +2096,11 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
 
                     if filter_type == "violation":
                         where_conds.append("(risk_level IN ('high', 'critical') OR verify_status = 'verified_failed')")
-                    elif filter_type == "clean":
-                        where_conds.append("((risk_level = 'safe' OR verify_status = 'verified_clean') AND risk_level NOT IN ('high', 'critical') AND verify_status != 'verified_failed')")
                     elif filter_type == "pending":
-                        where_conds.append("((risk_level = 'pending' OR verify_status = 'unverified') AND risk_level NOT IN ('high', 'critical', 'safe') AND verify_status NOT IN ('verified_failed', 'verified_clean'))")
+                        where_conds.append("((risk_level = 'pending' OR verify_status = 'unverified') AND risk_level NOT IN ('high', 'critical') AND verify_status != 'verified_failed')")
+                    elif filter_type == "error_pages":
+                        where_conds.append("(verify_detail::text ILIKE %s OR verify_detail::text ILIKE %s OR verify_detail::text ILIKE %s)")
+                        params.extend(["%404%", "%page_not_found%", "%dead_domain%"])
 
                     if search:
                         if search.isdigit():
@@ -2052,6 +2168,7 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                         r_lvl = (row.get("risk_level") or "pending").lower()
                         v_stat = row.get("verify_status") or "unverified"
                         is_viol = (r_lvl in ("critical", "high") or v_stat == "verified_failed")
+                        is_inspected = bool(row.get("verify_time"))
 
                         tags = []
                         try:
@@ -2086,6 +2203,8 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                             if "dns_cnames" not in verdict_summary and rep_summ.get("dns_cnames"):
                                 verdict_summary["dns_cnames"] = rep_summ.get("dns_cnames")
 
+                            is_404 = bool(rep_summ.get("is_404") or verdict_summary.get("primary_violation_category") == "page_not_found" or "404" in str(verdict_summary.get("cloaking_notes", "")))
+
                             tasks.append({
                                 "id": row.get("id"),
                                 "task_id": row.get("task_id", 0),
@@ -2095,6 +2214,9 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                                 "ref_count": int(row.get("ref_count") or 1),
                                 "model_used": log.get("model_used") or "XiaoAi",
                                 "checked_at": str(log.get("checked_at") or row.get("verify_time") or ""),
+                                "verify_time": str(row.get("verify_time") or ""),
+                                "is_inspected": is_inspected,
+                                "is_404": is_404,
                                 "source": "compliance_audit_logs",
                                 "risk_remark": row.get("risk_remark", ""),
                                 "verdict_summary": verdict_summary,
@@ -2110,18 +2232,22 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                                 except Exception:
                                     pass
 
-                            def_cn = "正常合规"
+                            is_404 = bool(detail_obj.get("is_404") or detail_obj.get("primary_violation") == "page_not_found" or "404" in detail_raw)
+
+                            def_cn = "待研判"
                             if is_viol:
                                 def_cn = "涉险违规"
-                            elif r_lvl == "pending":
-                                def_cn = "待研判"
+                            elif is_404:
+                                def_cn = "页面不存在 (404)"
+                            elif is_inspected:
+                                def_cn = "未见异常"
 
                             notes = detail_obj.get("summary") or row.get("risk_remark") or detail_raw
                             if not notes:
-                                if r_lvl == "pending":
-                                    notes = "尚未执行多端仿真截屏与视觉模型深度审核，可直接点击右上角【立即研判此域名】或顶部【启动单批巡检】启动自动化存证。"
+                                if is_inspected:
+                                    notes = "AI多模态视觉切片巡检未见异常，系统保持待研判记录。"
                                 else:
-                                    notes = "系统规则研判记录，尚未进行多端视觉切片存证。"
+                                    notes = "尚未执行多端仿真截屏与视觉模型深度审核，可直接点击右上角【立即研判此域名】或顶部【启动单批巡检】启动自动化存证。"
 
                             tasks.append({
                                 "id": row.get("id"),
@@ -2130,14 +2256,18 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                                 "url": f"https://{dom}",
                                 "sample_page_url": row.get("sample_page_url", ""),
                                 "ref_count": int(row.get("ref_count") or 1),
-                                "model_used": detail_obj.get("model_used", "规则引擎/多模态"),
+                                "model_used": detail_obj.get("model_used", "超级小爱 / 多模态"),
                                 "checked_at": str(row.get("verify_time") or ""),
+                                "verify_time": str(row.get("verify_time") or ""),
+                                "is_inspected": is_inspected,
+                                "is_404": is_404,
                                 "risk_remark": row.get("risk_remark", ""),
                                 "source": "external_domains",
                                 "verdict_summary": {
                                     "is_violation": is_viol,
-                                    "overall_risk_level": r_lvl.upper(),
-                                    "primary_violation_category": tags[0] if tags else ("risk" if is_viol else ("pending" if r_lvl == "pending" else "normal")),
+                                    "is_404": is_404,
+                                    "overall_risk_level": r_lvl.upper() if r_lvl != "safe" else "PENDING",
+                                    "primary_violation_category": tags[0] if tags else ("risk" if is_viol else ("page_not_found" if is_404 else "normal")),
                                     "primary_violation_cn": tags[0] if tags else def_cn,
                                     "cloaking_suspected": bool(detail_obj.get("cloaking_suspected", False)),
                                     "cloaking_notes": notes,
