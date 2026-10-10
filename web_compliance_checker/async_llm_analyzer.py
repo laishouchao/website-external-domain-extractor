@@ -87,8 +87,9 @@ class AsyncMultimodalSafetyAnalyzer:
         is_mock: bool = False
     ) -> Dict[str, Any]:
         """
-        受控并发的大模型推理请求调用。
-        智能适配多模态视觉模型与对话/推理大模型 (超级小爱 XiaoAi 局域网引擎)。
+        受控并发的截图视觉大模型推理。
+        直接将由 Playwright 截取的网页视觉图片 (image_url base64) 传入多模态大模型，
+        大模型仅作为视觉判定引擎直接审视图片内容，不进行任何网络访问。
         """
         if is_mock:
             await asyncio.sleep(0.05)  # 仿真微量异步耗时
@@ -96,57 +97,20 @@ class AsyncMultimodalSafetyAnalyzer:
 
         async with self._semaphore:
             is_ollama_native = "/api/chat" in self.api_base
-            is_xiaoai = "xiaoai" in self.model.lower()
-            is_vision_model = (
-                not is_xiaoai
-                and (
-                    "vl" in self.model.lower()
-                    or "vision" in self.model.lower()
-                    or "llava" in self.model.lower()
-                    or "minicpm" in self.model.lower()
-                    or is_ollama_native
-                )
+
+            # 纯视觉审核 Prompt：让大模型直接对输入的截图画面进行合规审查，返回标准结构化 JSON
+            audit_prompt = (
+                "审查此网页截图是否合规。严格以JSON返回判定结果（需包含 is_violation, risk_level, confidence, primary_violation, violation_details 字段）："
             )
-
-            # 提取页面与网络环境上下文
-            ctx = context or {}
-            target_url = ctx.get("url", "")
-            final_url = ctx.get("final_url") or target_url
-            device_name = ctx.get("device_name", "通用设备")
-            page_title = ctx.get("page_title", "")
-            page_text = ctx.get("page_text", "")
-            redirect_notes = ctx.get("redirect_notes", "")
-            slice_name = ctx.get("slice_name", "")
-
-            prompt_parts = [USER_PROMPT]
-            if target_url:
-                prompt_parts.append(f"\n【目标 URL】: {target_url}")
-            if final_url and final_url != target_url:
-                prompt_parts.append(f"【落地页 URL】: {final_url}")
-            if device_name:
-                prompt_parts.append(f"【访问设备端】: {device_name}")
-            if redirect_notes:
-                prompt_parts.append(f"【重定向/跳转信息】: {redirect_notes}")
-            if page_title:
-                prompt_parts.append(f"【网页标题】: {page_title}")
-            if slice_name:
-                prompt_parts.append(f"【视口切片位置】: {slice_name}")
-            if page_text:
-                prompt_parts.append(f"【页面文本内容摘要】:\n{page_text[:1600]}")
-
-            composite_user_prompt = "\n".join(prompt_parts)
 
             if is_ollama_native:
                 endpoint_url = self.api_base
-                msg_user = {"role": "user", "content": composite_user_prompt}
-                if image_base64 and is_vision_model:
+                msg_user = {"role": "user", "content": audit_prompt}
+                if image_base64:
                     msg_user["images"] = [image_base64]
                 payload = {
                     "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        msg_user
-                    ],
+                    "messages": [msg_user],
                     "stream": False,
                     "format": "json",
                     "options": {"temperature": 0.05, "num_predict": 512}
@@ -159,23 +123,20 @@ class AsyncMultimodalSafetyAnalyzer:
                 else:
                     endpoint_url = f"{self.api_base}/v1/chat/completions"
 
-                if is_vision_model and image_base64:
-                    image_url = f"data:image/png;base64,{image_base64}"
+                if image_base64:
+                    # 标准 Vision 接口：直接传入网页截图与视觉合规判定要求
                     user_content = [
-                        {"type": "text", "text": composite_user_prompt},
-                        {"type": "image_url", "image_url": {"url": image_url}}
+                        {"type": "text", "text": audit_prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
                     ]
                 else:
-                    # XiaoAi 局域网大模型引擎或纯文本审查通道
-                    user_content = composite_user_prompt
+                    user_content = [{"type": "text", "text": audit_prompt}]
 
                 payload = {
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": user_content}
                     ],
-                    "response_format": {"type": "json_object"},
                     "temperature": 0.05
                 }
 
@@ -228,16 +189,29 @@ class AsyncMultimodalSafetyAnalyzer:
                 }
 
     def _normalize_verdict(self, data: Dict[str, Any], raw_text: str) -> Dict[str, Any]:
-        is_violation = bool(data.get("is_violation", False))
-        risk_level = str(data.get("risk_level", "SAFE")).upper()
-        confidence = float(data.get("confidence", 0.9 if not is_violation else 0.8))
+        if "判定" in data:
+            is_violation = data.get("判定") in ("违规", "不合规", "违法")
+            violation_details = data.get("原因", "") or data.get("说明", "")
+        else:
+            is_violation = bool(data.get("is_violation", False))
+            violation_details = data.get("violation_details", "") or data.get("reason", "")
+
+        if "risk_level" in data:
+            risk_level = str(data.get("risk_level", "SAFE")).upper()
+        else:
+            risk_level = "HIGH" if is_violation else "SAFE"
+
+        confidence = float(data.get("confidence", 0.95 if not is_violation else 0.85))
         confidence = max(0.0, min(1.0, confidence))
-        primary_violation = str(data.get("primary_violation", "normal" if not is_violation else "unknown"))
+
+        primary_violation = str(
+            data.get("primary_violation", data.get("违规类型", "normal" if not is_violation else "unknown"))
+        )
 
         raw_cats = data.get("categories", [])
         normalized_cats = []
 
-        if isinstance(raw_cats, list):
+        if isinstance(raw_cats, list) and raw_cats:
             for cat in raw_cats:
                 if isinstance(cat, dict):
                     prob = float(cat.get("probability", 0.0))
@@ -247,6 +221,15 @@ class AsyncMultimodalSafetyAnalyzer:
                         "probability": round(max(0.0, min(1.0, prob)), 4),
                         "reason": cat.get("reason", "")
                     })
+        else:
+            for cat_key in ["pornography_vulgarity", "gambling_lottery", "fraud_scam", "violence_contraband", "political_extremism", "malicious_adware"]:
+                is_hit = is_violation and (cat_key in primary_violation)
+                normalized_cats.append({
+                    "key": cat_key,
+                    "detected": is_hit,
+                    "probability": 0.95 if is_hit else 0.01,
+                    "reason": violation_details if is_hit else "截图未检出该项违规"
+                })
 
         return {
             "is_violation": is_violation,
@@ -254,7 +237,7 @@ class AsyncMultimodalSafetyAnalyzer:
             "confidence": round(confidence, 4),
             "primary_violation": primary_violation,
             "categories": normalized_cats,
-            "violation_details": data.get("violation_details", ""),
+            "violation_details": violation_details,
             "visual_elements_found": data.get("visual_elements_found", []),
             "raw_model_response": raw_text
         }

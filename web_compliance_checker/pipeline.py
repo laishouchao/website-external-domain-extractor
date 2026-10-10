@@ -402,11 +402,12 @@ class DecoupledInspectionPipeline:
                         context=context_dict,
                         is_mock=self.is_mock
                     )
+                    is_viol = verdict.get("is_violation", False)
+                    risk_lvl = verdict.get("risk_level", "SAFE")
+                    p_cat = verdict.get("primary_violation", "normal")
+                    v_desc = verdict.get("violation_details", "")
                     if not self.is_mock:
-                        is_viol = verdict.get("is_violation", False)
-                        risk_lvl = verdict.get("risk_level", "SAFE")
-                        p_cat = verdict.get("primary_violation", "normal")
-                        print(f"  [+] [AI研判完成] 设备 [{dev_name}] -> {'违规!' if is_viol else '正常'} (风险: {risk_lvl}, 分类: {p_cat})", flush=True)
+                        print(f"  [+] [AI研判完成] 设备 [{dev_name}] -> {'违规!' if is_viol else '正常'} (风险: {risk_lvl}, 结论: {v_desc})", flush=True)
                 else:
                     verdict = {
                         "is_violation": False,

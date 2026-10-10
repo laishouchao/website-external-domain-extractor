@@ -69,27 +69,24 @@ class MultimodalSafetyAnalyzer:
 
     def _build_openai_payload(self, image_base64: str, prompt_text: Optional[str] = None) -> Dict[str, Any]:
         """
-        构建 OpenAI 兼容的多模态或文本对话 Chat Completion 请求载荷。
+        构建 OpenAI 兼容的多模态视觉 Chat Completion 请求载荷。
+        直接传入网页截图与视觉审核 Prompt。
         """
-        is_xiaoai = "xiaoai" in self.model.lower()
-        is_vision = not is_xiaoai and ("vl" in self.model.lower() or "vision" in self.model.lower() or "llava" in self.model.lower())
-        prompt = prompt_text or USER_PROMPT
+        prompt = prompt_text or "审查此网页截图是否合规。严格以JSON返回判定结果（需包含 is_violation, risk_level, confidence, primary_violation, violation_details 字段）："
 
-        if is_vision and image_base64:
+        if image_base64:
             user_content = [
                 {"type": "text", "text": prompt},
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
             ]
         else:
-            user_content = prompt
+            user_content = [{"type": "text", "text": prompt}]
 
         return {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content}
             ],
-            "response_format": {"type": "json_object"},
             "temperature": 0.05
         }
 
