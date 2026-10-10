@@ -44,12 +44,6 @@
   - **JSON 格式**：包含任务元数据及全量结构化域名数据。
   - **XML 格式**：标准 XML 格式站点地图。
 
-### 5. 多端仿真与多模态安全巡检控制台 (Web Compliance Checker)
-- **多端设备指纹仿真**：基于 Playwright 异步浏览器池常驻架构，覆盖 PC Chrome、Mac Safari、iPhone、Android 及 iPad，原生抹平 Webdriver 等自动化指纹特征，对抗黑灰产“设备端伪装（Cloaking）”。
-- **多模态大模型视觉研判**：融合视觉大模型（Vision-LLM）对涉赌、涉黄、电信诈骗、暴恐违禁等六大违规维度进行高精度研判并生成不可篡改存证报告。
-- **两级漏斗式前置剪枝**：内置异步 DNS (nslookup) 预检探针与轻量 HTTP 快速探活，10ms 拦截 NXDOMAIN 死链与 SSRF 内网保留 IP，大幅降低算力与流量消耗。
-- **证据链与报表一键导出**：支持 Excel 友好型 UTF-8 BOM CSV 与包含多端高清截图存证的 ZIP 归档包一键导出。
-
 ---
 
 ## 📸 系统重要功能界面预览
@@ -117,14 +111,6 @@
 
 ---
 
-### 10. 网页多端仿真与多模态安全巡检控制台 (巡检子系统)
-> 联动全量外部域名数据库（PostgreSQL / ClickHouse），支持轻量级 DNS/HTTP 快速探活、桌面端与移动端双端无头仿真渲染、Playwright 隐身防爬指纹绕过、局域网大模型（超级小爱 XiaoAi）智能违规研判、证据链留存与一键研判报表导出。
-
-![多端仿真安全巡检控制台](docs/images/10_compliance_checker_dashboard.png)
-![AI智能识别配置与连通性测试](docs/images/11_compliance_checker_ai_config.png)
-
----
-
 ## 🚀 快速启动指南
 
 ### 环境要求
@@ -135,11 +121,9 @@
 如果需要全新安装依赖，执行：
 ```bash
 pip install -r requirements.txt
-playwright install chromium
 ```
 
 ### 启动服务
-#### 1. 启动主系统控制台 (端口 8000)
 - **方式一：Windows 双击启动**  
   直接双击运行项目根目录下的 `start.bat` 即可自动调用 Python 启动服务。
 - **方式二：命令行启动**  
@@ -147,12 +131,6 @@ playwright install chromium
   python run.py
   ```
   打开浏览器访问：**http://localhost:8000** 即可进入主系统 Web 控制台。
-
-#### 2. 启动多端仿真与安全巡检子系统 (端口 8888)
-```bash
-python web_compliance_checker/dashboard_server.py
-```
-打开浏览器访问：**http://localhost:8888** 即可进入安全巡检大屏与调度控制台。
 
 ---
 

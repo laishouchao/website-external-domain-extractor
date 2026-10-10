@@ -85,7 +85,6 @@ temp/
 *.png
 !docs/images/*.png
 output/
-web_compliance_checker/output/
 
 # ==========================================
 # Operating System Files
