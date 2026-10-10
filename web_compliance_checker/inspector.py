@@ -106,6 +106,42 @@ class DomainInspector:
                     "elapsed_sec": time.time() - start_time
                 }
 
+            # Check 404 upfront in probe -> SKIP Playwright and AI entirely!
+            if probe_res.get("is_404"):
+                self.db.write_inspection_result(
+                    domain=domain,
+                    is_violation=False,
+                    cloaking=False,
+                    ssrf=False,
+                    is_404=True,
+                    primary_violation="页面不存在 (404)",
+                    risk_level="pending",
+                    risk_tags="页面失效(404)",
+                    risk_remark="前置探活检测到404页面失效(跳过截图与大模型，保持待研判)",
+                    detail_dict={
+                        "probe": probe_res,
+                        "is_404": True,
+                        "skipped_screenshot": True,
+                        "reason": "404 Not Found (探活跳过截屏与大模型)"
+                    },
+                    task_id=task_id,
+                    url=target_url
+                )
+                return {
+                    "domain": domain,
+                    "url": target_url,
+                    "status": "error_404",
+                    "is_violation": False,
+                    "is_404": True,
+                    "cloaking": False,
+                    "primary_violation": "页面不存在 (404)",
+                    "risk_level": "pending",
+                    "explanation": "前置探活检测到该页面为 404 Not Found 页面不存在，已直接跳过截图与大模型研判，状态保持待研判",
+                    "probe": probe_res,
+                    "device_results": {},
+                    "elapsed_sec": time.time() - start_time
+                }
+
         # -------------------------------------------------------------
         # Step 2: Multi-Device Screenshot Capture
         # -------------------------------------------------------------
@@ -129,6 +165,24 @@ class DomainInspector:
         desktop_is_404 = False
 
         for dev_key, dev_cap in captured_devices.items():
+            # If device detected 404 during navigation, SKIP AI call entirely!
+            if dev_cap.get("is_404"):
+                device_results[dev_key] = {
+                    "capture": dev_cap,
+                    "ai": {
+                        "is_violation": False,
+                        "is_404": True,
+                        "primary_category_cn": "页面不存在 (404)",
+                        "explanation": f"[{dev_cap.get('device_name')}]: 页面特征为 404 Not Found，已跳过大模型调用"
+                    }
+                }
+                if dev_cap.get("is_mobile"):
+                    pass
+                else:
+                    desktop_is_404 = True
+                explanations.append(f"[{dev_cap.get('device_name')}]: 页面显示 404 Not Found 页面不存在 (已跳过截图与AI)")
+                continue
+
             if not dev_cap["success"] or not dev_cap.get("base64_data_uri"):
                 device_results[dev_key] = {
                     "capture": dev_cap,

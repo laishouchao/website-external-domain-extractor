@@ -116,8 +116,37 @@ class CaptureEngine:
             except Exception:
                 text_content = ""
 
-            # Capture screenshot buffer (JPEG/PNG)
-            # Clip viewport to sensible height
+            # Check if page is 404 (Status code or body content)
+            body_lower = (text_content or "").lower()
+            title_lower = (title or "").lower()
+            is_404 = bool(
+                http_status in [404, 410]
+                or "404 not found" in body_lower
+                or "404 not found" in title_lower
+                or "页面不存在" in text_content
+                or "页面不存在" in title
+                or (len(body_lower.strip()) < 120 and ("404" in body_lower or "not found" in body_lower))
+            )
+
+            # If 404, SKIP screenshotting, file saving, and base64 encoding!
+            if is_404:
+                return {
+                    "success": True,
+                    "device": device_key,
+                    "device_name": profile["name"],
+                    "viewport": profile["viewport"],
+                    "is_mobile": profile.get("is_mobile", False),
+                    "title": title,
+                    "text_snippet": text_content.strip()[:300],
+                    "http_status": http_status or 404,
+                    "is_404": True,
+                    "screenshot_path": "",
+                    "base64_data_uri": "",
+                    "sha256": "",
+                    "error": None,
+                }
+
+            # Capture screenshot buffer (JPEG/PNG) only for NON-404 pages
             vp = profile["viewport"]
             clip_rect = {"x": 0, "y": 0, "width": vp["width"], "height": min(vp["height"], 1080)}
 

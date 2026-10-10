@@ -140,6 +140,8 @@ async function loadTable() {
             <span class="absolute inset-0 bg-indigo-900/40 opacity-0 group-hover:opacity-100 rounded flex items-center justify-center text-white text-[10px] font-bold transition">🔍</span>
           </div>
         `;
+      } else if (item.is_404 || item.badge_type === 'error_404') {
+        thumbHtml = '<span class="text-amber-400 text-[10px] bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 whitespace-nowrap">⚠️ 404跳过截屏</span>';
       }
 
       rowsHtml += `
@@ -480,7 +482,9 @@ async function openDetailDrawer(domain) {
       }
     });
 
-    scBox.innerHTML = scHtml || '<div class="text-slate-500 py-4 col-span-2 text-center">暂无多端截图存证</div>';
+    scBox.innerHTML = scHtml || ((data.detail && data.detail.is_404) ? 
+      '<div class="text-amber-400/90 py-4 col-span-2 text-center text-xs p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">⚠️ 该页面为 404 报错失效页面，系统已自动短路跳过无意义的截图与大模型调用，保持待研判。</div>' : 
+      '<div class="text-slate-500 py-4 col-span-2 text-center">暂无多端截图存证</div>');
 
     // Probe meta
     const probe = (data.detail && data.detail.probe) || {};

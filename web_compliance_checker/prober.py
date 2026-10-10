@@ -148,24 +148,15 @@ def probe_domain(
     for scheme in ["https://", "http://"]:
         target_url = f"{scheme}{host}"
         try:
-            resp = requests.head(target_url, headers=headers, timeout=http_timeout, verify=False, allow_redirects=True)
+            resp = requests.get(target_url, headers=headers, timeout=http_timeout, verify=False, allow_redirects=True)
             status_code = resp.status_code
             final_url = resp.url
-            if status_code == 404:
+            body_sample = resp.text[:1500].lower() if resp.text else ""
+            if status_code in [404, 410] or "404 not found" in body_sample or "页面不存在" in body_sample or "<title>404" in body_sample:
                 is_404 = True
             break
         except Exception:
-            # Fallback to GET with stream=True
-            try:
-                resp = requests.get(target_url, headers=headers, timeout=http_timeout, verify=False, allow_redirects=True, stream=True)
-                status_code = resp.status_code
-                final_url = resp.url
-                if status_code == 404:
-                    is_404 = True
-                resp.close()
-                break
-            except Exception:
-                continue
+            continue
 
     if status_code is None:
         return {
