@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>网站外部域名合规审计系统 - Web Compliance Inspector</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased selection:bg-indigo-500 selection:text-white">
+
+  <!-- ============================================================================== -->
+  <!-- Top Navigation Bar -->
+  <!-- ============================================================================== -->
+  <header class="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 shadow-lg">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <!-- Brand Logo -->
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+          <span class="text-xl">🛡️</span>
+        </div>
+        <div>
+          <h1 class="text-base font-bold text-white flex items-center gap-2">
+            网站外部域名合规审计控制台
+            <span class="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">v2.0 纯视觉研判版</span>
+          </h1>
+          <p class="text-xs text-slate-400">自动化多端视口仿真 · 识破 Cloaking 假面 · 杜绝 404 误标安全</p>
+        </div>
+      </div>
+
+      <!-- System Connectivity Badges & Action Buttons -->
+      <div class="flex items-center gap-3">
+        <!-- Live Status Pills -->
+        <div class="hidden md:flex items-center gap-2 bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-1.5 text-xs">
+          <div class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="text-slate-300 font-medium">PostgreSQL 直连</span>
+          </div>
+          <span class="text-slate-600">|</span>
+          <div class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-purple-400"></span>
+            <span class="text-purple-300 font-medium">XiaoAi 视觉模型</span>
+          </div>
+        </div>
+
+        <!-- Quick Single Audit -->
+        <button onclick="openInstantAuditModal()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition flex items-center gap-1.5">
+          <span>🔍</span> 单域名即时诊断
+        </button>
+
+        <!-- Refresh Button -->
+        <button onclick="loadAllData()" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition" title="刷新数据">
+          <span>🔄</span>
+        </button>
+
+        <!-- Launch Batch Scan Button -->
+        <button onclick="openScanModal()" class="px-4 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-bold shadow-md shadow-indigo-600/30 transition flex items-center gap-1.5">
+          <span>⚡</span> 自动化多端巡检调度
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============================================================================== -->
+  <!-- Live Scan Floating Banner (Visible when job is active) -->
+  <!-- ============================================================================== -->
+  <div id="liveScanBanner" class="hidden bg-gradient-to-r from-indigo-950/90 via-slate-900/90 to-purple-950/90 border-b border-indigo-500/30 px-4 py-2.5 backdrop-blur-md">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
+      <div class="flex items-center gap-3">
+        <span class="flex h-3 w-3 relative">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span>
+        </span>
+        <span class="font-bold text-white flex items-center gap-1">
+          巡检执行中: <span id="bannerCurrentDomain" class="text-cyan-400 font-mono font-bold">-</span>
+        </span>
+        <span id="bannerProgressText" class="text-slate-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">0 / 0</span>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <!-- Progress Bar -->
+        <div class="w-36 sm:w-48 bg-slate-800 rounded-full h-2.5 overflow-hidden border border-slate-700">
+          <div id="bannerProgressBar" class="bg-gradient-to-r from-indigo-500 to-cyan-400 h-2.5 transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <!-- Toggle Log Drawer -->
+        <button onclick="toggleLogDrawer()" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-[11px] border border-slate-700">
+          📜 终端日志
+        </button>
+        <!-- Stop Button -->
+        <button onclick="stopScanJob()" class="px-2.5 py-1 rounded bg-rose-600/80 hover:bg-rose-600 text-white font-bold text-[11px] transition">
+          ⏹️ 停止任务
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================================== -->
+  <!-- Main Content Body -->
+  <!-- ============================================================================== -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- 4 Core Metric Stat Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      
+      <!-- Card 1: Total Distinct Domains -->
+      <div onclick="setFilter('all')" class="stat-card cursor-pointer group bg-slate-900 border border-slate-800 hover:border-indigo-500/50 rounded-2xl p-4 transition-all duration-200 shadow-sm hover:shadow-indigo-500/10">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-semibold text-slate-400 group-hover:text-slate-300">🌐 域名资产总盘</span>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">去重主资产</span>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="statDistinctDomains" class="text-3xl font-extrabold text-white font-mono">-</span>
+          <span class="text-xs text-slate-400">个独立域名</span>
+        </div>
+        <div class="mt-2 text-[11px] text-slate-400 flex items-center justify-between pt-2 border-t border-slate-800/80">
+          <span>全库外链记录:</span>
+          <span id="statTotalRows" class="font-mono font-bold text-slate-300">- 条</span>
+        </div>
+      </div>
+
+      <!-- Card 2: Actionable Violations -->
+      <div onclick="setFilter('violation')" class="stat-card cursor-pointer group bg-gradient-to-b from-rose-950/30 to-slate-900 border border-rose-900/40 hover:border-rose-500 rounded-2xl p-4 transition-all duration-200 shadow-sm hover:shadow-rose-500/10">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-semibold text-rose-300">🚨 确凿违规处置 (重点)</span>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">verified_failed</span>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="statViolations" class="text-3xl font-extrabold text-rose-400 font-mono">-</span>
+          <span class="text-xs text-rose-300/80">个违规站点</span>
+        </div>
+        <div class="mt-2 text-[11px] text-rose-300/70 flex items-center justify-between pt-2 border-t border-rose-900/30">
+          <span>类别覆盖:</span>
+          <span>色情 / 赌博 / 诈骗 / 暗链</span>
+        </div>
+      </div>
+
+      <!-- Card 3: Cloaking Deception -->
+      <div onclick="setFilter('cloaking')" class="stat-card cursor-pointer group bg-gradient-to-b from-purple-950/30 to-slate-900 border border-purple-900/40 hover:border-purple-500 rounded-2xl p-4 transition-all duration-200 shadow-sm hover:shadow-purple-500/10">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-semibold text-purple-300">🎭 设备伪装欺诈</span>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">Cloaking 假面</span>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="statCloaking" class="text-3xl font-extrabold text-purple-400 font-mono">-</span>
+          <span class="text-xs text-purple-300/80">个双面站点</span>
+        </div>
+        <div class="mt-2 text-[11px] text-purple-300/70 flex items-center justify-between pt-2 border-t border-purple-900/30">
+          <span>防线特征:</span>
+          <span>PC端正常/移动端违规</span>
+        </div>
+      </div>
+
+      <!-- Card 4: Pending Pool -->
+      <div onclick="setFilter('pending')" class="stat-card cursor-pointer group bg-slate-900 border border-slate-800 hover:border-amber-500/50 rounded-2xl p-4 transition-all duration-200 shadow-sm hover:shadow-amber-500/10">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-semibold text-amber-300">⏳ 待研判资产池</span>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">绝不盖章安全</span>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="statPendingPool" class="text-3xl font-extrabold text-amber-400 font-mono">-</span>
+          <span class="text-xs text-slate-400">个资产待研判</span>
+        </div>
+        <div class="mt-2 text-[11px] text-slate-400 flex items-center justify-between pt-2 border-t border-slate-800/80">
+          <span>含404报错 / 未见异常:</span>
+          <span id="statErrorPagesText" class="font-mono text-amber-300">11 处404保持待判</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Strict Business Policy Banner -->
+    <div class="p-3.5 rounded-xl bg-slate-900/80 border border-indigo-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+      <div class="flex items-center gap-2.5">
+        <span class="text-lg">⚖️</span>
+        <div>
+          <span class="font-bold text-white">合规审计基准原则：</span>
+          <span class="text-slate-300">系统坚决<strong>不将 404 报错页面或未见异常页面标记为安全（safe）</strong>，一律严格保持待研判记录；仅对捕获确凿异常（违规违法、双端伪装、内网穿透）回写处置标记。</span>
+        </div>
+      </div>
+      <button onclick="remediateLegacyData()" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-semibold border border-slate-700 whitespace-nowrap transition">
+        🧹 规范存量历史数据
+      </button>
+    </div>
+
+    <!-- ============================================================================== -->
+    <!-- Domains Assets Table Section -->
+    <!-- ============================================================================== -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden flex flex-col">
+      
+      <!-- Table Header Bar: Tabs & Search Input -->
+      <div class="p-4 border-b border-slate-800 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 bg-slate-900/60">
+        
+        <!-- Category Filter Tabs -->
+        <div class="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
+          <button onclick="setFilter('all')" id="tab_all" class="tab-btn px-3 py-1.5 rounded-lg active">
+            全部资产 <span id="tabBadge_all" class="ml-1 opacity-75 font-mono text-[11px]"></span>
+          </button>
+          <button onclick="setFilter('violation')" id="tab_violation" class="tab-btn px-3 py-1.5 rounded-lg text-rose-400">
+            🚨 确凿违规 <span id="tabBadge_violation" class="ml-1 font-mono text-[11px] bg-rose-500/20 px-1.5 py-0.2 rounded-full"></span>
+          </button>
+          <button onclick="setFilter('cloaking')" id="tab_cloaking" class="tab-btn px-3 py-1.5 rounded-lg text-purple-400">
+            🎭 设备伪装 <span id="tabBadge_cloaking" class="ml-1 font-mono text-[11px] bg-purple-500/20 px-1.5 py-0.2 rounded-full"></span>
+          </button>
+          <button onclick="setFilter('error_pages')" id="tab_error_pages" class="tab-btn px-3 py-1.5 rounded-lg text-amber-400">
+            ⚠️ 404 / 异常报错 <span id="tabBadge_error_pages" class="ml-1 font-mono text-[11px] bg-amber-500/20 px-1.5 py-0.2 rounded-full"></span>
+          </button>
+          <button onclick="setFilter('pending')" id="tab_pending" class="tab-btn px-3 py-1.5 rounded-lg text-slate-300">
+            ⏳ 待研判资产 <span id="tabBadge_pending" class="ml-1 opacity-75 font-mono text-[11px]"></span>
+          </button>
+        </div>
+
+        <!-- Search Bar -->
+        <div class="flex items-center gap-2 w-full lg:w-auto">
+          <div class="relative flex-1 lg:w-72">
+            <input type="text" id="searchInput" placeholder="搜索域名或根域名..." onkeydown="handleSearchKey(event)" class="w-full bg-slate-950 border border-slate-700 focus:border-indigo-500 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none transition">
+            <span class="absolute left-2.5 top-2 text-slate-500 text-xs">🔍</span>
+          </div>
+          <button onclick="triggerSearch()" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition">
+            搜索
+          </button>
+          <button onclick="clearSearch()" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs transition" title="清空搜索">
+            ✕
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Assets Table -->
+      <div class="overflow-x-auto min-h-[350px]">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr class="bg-slate-950/80 text-slate-400 border-b border-slate-800 font-semibold uppercase tracking-wider text-[11px]">
+              <th class="py-3 px-4">域名资产 / 访问地址</th>
+              <th class="py-3 px-4">状态徽章</th>
+              <th class="py-3 px-4">视觉研判结论与说明</th>
+              <th class="py-3 px-4">取证快照</th>
+              <th class="py-3 px-4">研判时间</th>
+              <th class="py-3 px-4 text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody" class="divide-y divide-slate-800 text-slate-200">
+            <!-- Dynamic rows injected by app.js -->
+            <tr>
+              <td colspan="6" class="text-center py-12 text-slate-500">
+                <div class="animate-spin inline-block w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full mb-2"></div>
+                <div>正在加载资产数据...</div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Table Footer: Pagination Bar -->
+      <div class="p-3.5 border-t border-slate-800 bg-slate-950/60 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+        <div id="paginationInfo">
+          显示 0 到 0 条，共 0 条资产
+        </div>
+        <div class="flex items-center gap-1.5">
+          <button onclick="goToPage(currentPage - 1)" id="btnPrevPage" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+            上一页
+          </button>
+          <div id="pageNumbers" class="flex items-center gap-1">
+            <!-- Injected page buttons -->
+          </div>
+          <button onclick="goToPage(currentPage + 1)" id="btnNextPage" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+            下一页
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- ============================================================================== -->
+  <!-- MODAL 1: 自动化多端巡检调度配置 (彻底重构，选项 100% 交互高亮反应) -->
+  <!-- ============================================================================== -->
+  <div id="scanConfigModal" class="modal-backdrop fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center hidden p-4" onclick="closeScanModal()">
+    <div class="modal-content bg-slate-900 border border-slate-700 rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-5" onclick="event.stopPropagation()">
+      
+      <!-- Modal Header -->
+      <div class="flex justify-between items-center pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-2.5">
+          <span class="text-2xl">⚡</span>
+          <div>
+            <h3 class="font-bold text-white text-base">自动化多端巡检调度配置</h3>
+            <p class="text-xs text-indigo-400">配置巡检并发、设备选型与批次规模，启动自动化流水线</p>
+          </div>
+        </div>
+        <button onclick="closeScanModal()" class="text-slate-400 hover:text-white text-xl p-1">✕</button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        
+        <!-- 1. Device Profiles Selection (Card Selector with obvious glowing border) -->
+        <div>
+          <label class="block text-slate-300 font-semibold mb-2">多端仿真设备选型 (多端渲染识破 Cloaking 伪装):</label>
+          <div class="grid grid-cols-1 gap-2.5">
+            
+            <!-- Option 1: Dual Device (Recommended) -->
+            <div id="devCard_dual" onclick="selectDevicePreset('dual')" class="select-card active p-3 rounded-xl border cursor-pointer transition flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <span class="text-2xl">⚡</span>
+                <div>
+                  <div class="font-bold text-white flex items-center gap-2">
+                    双端智能比对巡检 (PC Chrome + iPhone Safari)
+                    <span class="text-[10px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.2 rounded font-normal">默认推荐</span>
+                  </div>
+                  <div class="text-[11px] text-slate-400 mt-0.5">耗时减少 60%，兼顾桌面正规与移动端涉赌/涉色假面捕获</div>
+                </div>
+              </div>
+              <span class="check-icon text-indigo-400 font-bold text-base">✓</span>
+            </div>
+
+            <!-- Option 2: PC Single Device -->
+            <div id="devCard_pc" onclick="selectDevicePreset('pc')" class="select-card p-3 rounded-xl border cursor-pointer transition flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <span class="text-2xl">💻</span>
+                <div>
+                  <div class="font-bold text-white">桌面端 PC 单端极速模式</div>
+                  <div class="text-[11px] text-slate-400 mt-0.5">仅截取桌面端首屏视口，吞吐量翻倍</div>
+                </div>
+              </div>
+              <span class="check-icon hidden text-indigo-400 font-bold text-base">✓</span>
+            </div>
+
+            <!-- Option 3: 4-Device Full Simulation -->
+            <div id="devCard_full" onclick="selectDevicePreset('full')" class="select-card p-3 rounded-xl border cursor-pointer transition flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <span class="text-2xl">📱</span>
+                <div>
+                  <div class="font-bold text-white">4 端全量仿真 (桌面PC + Mac + 苹果iPhone + 安卓Chrome)</div>
+                  <div class="text-[11px] text-slate-400 mt-0.5">全设备视口留存，极度严苛安全审计适用</div>
+                </div>
+              </div>
+              <span class="check-icon hidden text-indigo-400 font-bold text-base">✓</span>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- 2. Workers Concurrency (Button Segmented Group) -->
+        <div>
+          <label class="block text-slate-300 font-semibold mb-2">并发工作线程数 (--workers):</label>
+          <div class="grid grid-cols-5 gap-2" id="workersBtnGroup">
+            <button type="button" onclick="setWorkers(1)" class="btn-seg py-2 px-2 rounded-lg font-medium border" data-val="1">1 单线程</button>
+            <button type="button" onclick="setWorkers(2)" class="btn-seg py-2 px-2 rounded-lg font-medium border" data-val="2">2 并发</button>
+            <button type="button" onclick="setWorkers(3)" class="btn-seg py-2 px-2 rounded-lg font-bold border active" data-val="3">3 (推荐)</button>
+            <button type="button" onclick="setWorkers(5)" class="btn-seg py-2 px-2 rounded-lg font-medium border" data-val="5">5 高效</button>
+            <button type="button" onclick="setWorkers(8)" class="btn-seg py-2 px-2 rounded-lg font-medium border" data-val="8">8 极速</button>
+          </div>
+        </div>
+
+        <!-- 3. Batch Size (Button Segmented Group) -->
+        <div>
+          <label class="block text-slate-300 font-semibold mb-2">单批次提取域名数 (--batch-size):</label>
+          <div class="grid grid-cols-4 gap-2" id="batchBtnGroup">
+            <button type="button" onclick="setBatch(10)" class="btn-seg py-2 px-2 rounded-lg font-medium border" data-val="10">10 条 (试跑)</button>
+            <button type="button" onclick="setBatch(30)" class="btn-seg py-2 px-2 rounded-lg font-bold border active" data-val="30">30 条 (推荐)</button>
+            <button type="button" onclick="setBatch(50)" class="btn-seg py-2 px-2 rounded-lg font-medium border" data-val="50">50 条</button>
+            <button type="button" onclick="setBatch(100)" class="btn-seg py-2 px-2 rounded-lg font-medium border" data-val="100">100 条</button>
+          </div>
+        </div>
+
+        <!-- 4. AI Vision Engine Info & Connection Test -->
+        <div class="p-3.5 rounded-xl bg-slate-950 border border-purple-900/40 space-y-2">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-base">🤖</span>
+              <span class="font-bold text-purple-300">局域网视觉大模型 (XiaoAi Vision)</span>
+            </div>
+            <button type="button" onclick="testAiConn()" id="btnTestAi" class="px-2.5 py-1 rounded bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 font-semibold text-[11px] transition flex items-center gap-1">
+              <span>⚡</span> 测试连通性
+            </button>
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono flex items-center justify-between">
+            <span>地址: http://192.168.1.190:8787/v1</span>
+            <span class="text-emerald-400 font-semibold">Vision-Only 纯视觉分析</span>
+          </div>
+          <div id="aiTestBanner" class="hidden text-[11px] p-2 rounded bg-slate-900 border font-mono"></div>
+        </div>
+
+        <!-- 5. Advanced Flags -->
+        <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+          <label class="flex items-center gap-2 cursor-pointer font-semibold text-emerald-400">
+            <input type="checkbox" id="cfgProbe" checked class="rounded text-emerald-600 w-4 h-4">
+            <span>⚡ 开启轻量级快速探活 (自动跳过死链/不可达，提升3~5倍吞吐)</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer font-semibold text-cyan-400 pl-6">
+            <input type="checkbox" id="cfgDns" checked class="rounded text-cyan-600 w-4 h-4">
+            <span>🌐 探活前启用异步 DNS (nslookup) 预检 (10ms 拦截 NXDOMAIN 与内网私有 IP，防 SSRF)</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer font-medium text-slate-400">
+            <input type="checkbox" id="cfgLoop" class="rounded text-indigo-600 w-4 h-4">
+            <span>开启后台常驻轮询守护 (批次完成后休眠 15s 监听新资产)</span>
+          </label>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer Action Buttons -->
+      <div class="pt-4 border-t border-slate-800 flex justify-between items-center text-xs">
+        <button onclick="submitStartScan(true)" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold flex items-center gap-1.5 transition">
+          <span>🔍</span> 仅预检目标 (Dry Run)
+        </button>
+        <div class="flex gap-2">
+          <button onclick="closeScanModal()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold transition">
+            取消
+          </button>
+          <button onclick="submitStartScan(false)" class="px-5 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 transition">
+            <span>🚀</span> 立即启动巡检
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============================================================================== -->
+  <!-- MODAL 2: 单域名即时诊断 (Instant Audit Modal) -->
+  <!-- ============================================================================== -->
+  <div id="instantAuditModal" class="modal-backdrop fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center hidden p-4" onclick="closeInstantAuditModal()">
+    <div class="modal-content bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4" onclick="event.stopPropagation()">
+      <div class="flex justify-between items-center pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-2">
+          <span class="text-xl">🔍</span>
+          <h3 class="font-bold text-white text-base">单域名即时双端诊断</h3>
+        </div>
+        <button onclick="closeInstantAuditModal()" class="text-slate-400 hover:text-white text-lg">✕</button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="block text-slate-300 font-semibold mb-1">输入待研判域名或完整 URL:</label>
+          <input type="text" id="instantAuditInput" placeholder="例如: www.xgrsks.cn" class="w-full bg-slate-950 border border-slate-700 focus:border-indigo-500 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none">
+        </div>
+        <div id="instantAuditStatus" class="hidden p-3 rounded-lg bg-slate-950 border text-slate-300 space-y-1">
+          <div id="instantAuditStatusMsg" class="font-semibold flex items-center gap-2"></div>
+        </div>
+      </div>
+
+      <div class="pt-3 border-t border-slate-800 flex justify-end gap-2 text-xs">
+        <button onclick="closeInstantAuditModal()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold">取消</button>
+        <button onclick="executeInstantAudit()" id="btnStartInstantAudit" class="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold flex items-center gap-1.5 shadow-md">
+          <span>⚡</span> 开始诊断
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================================== -->
+  <!-- MODAL 3: 取证截图全屏灯箱 (Lightbox) -->
+  <!-- ============================================================================== -->
+  <div id="imageLightboxModal" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center hidden p-4" onclick="closeLightbox()">
+    <div class="relative max-w-5xl w-full max-h-[92vh] flex flex-col bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl" onclick="event.stopPropagation()">
+      <div class="p-3 bg-slate-950 border-b border-slate-800 flex justify-between items-center text-xs">
+        <div class="flex items-center gap-2">
+          <span class="text-base">🖼️</span>
+          <span id="lightboxTitle" class="font-bold text-white">取证截图查看</span>
+          <span id="lightboxSha" class="font-mono text-[10px] text-indigo-400 bg-slate-800 px-2 py-0.5 rounded truncate max-w-xs"></span>
+        </div>
+        <div class="flex items-center gap-2">
+          <a id="lightboxDirectLink" href="#" target="_blank" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold transition">新标签打开 ↗</a>
+          <button onclick="closeLightbox()" class="p-1 text-slate-400 hover:text-white text-lg">✕</button>
+        </div>
+      </div>
+      <div class="flex-1 overflow-auto p-4 flex items-center justify-center bg-black/60 min-h-[400px]">
+        <img id="lightboxImg" src="" alt="取证截图" class="max-w-full max-h-[80vh] object-contain rounded-lg border border-slate-800 shadow-2xl">
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================================== -->
+  <!-- DRAWER: 取证详情抽屉 (Inspection Detail Drawer) -->
+  <!-- ============================================================================== -->
+  <div id="detailDrawerBackdrop" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs hidden" onclick="closeDetailDrawer()">
+    <div id="detailDrawer" class="absolute right-0 top-0 bottom-0 max-w-2xl w-full bg-slate-900 border-l border-slate-800 shadow-2xl flex flex-col overflow-hidden" onclick="event.stopPropagation()">
+      <div class="p-4 bg-slate-950 border-b border-slate-800 flex justify-between items-center">
+        <div>
+          <h3 id="drawerDomain" class="font-bold text-white text-base font-mono">domain.com</h3>
+          <p id="drawerUrl" class="text-xs text-slate-400 font-mono mt-0.5 truncate max-w-md">https://domain.com</p>
+        </div>
+        <button onclick="closeDetailDrawer()" class="text-slate-400 hover:text-white text-xl p-1">✕</button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-5 space-y-5 text-xs">
+        <!-- Status & Badge Overview -->
+        <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+          <div>
+            <span class="text-slate-400 block text-[11px]">当前处置状态</span>
+            <span id="drawerBadge" class="font-bold text-sm mt-0.5 inline-block">-</span>
+          </div>
+          <div>
+            <span class="text-slate-400 block text-[11px]">风险等级</span>
+            <span id="drawerRiskLevel" class="font-mono font-bold mt-0.5 inline-block">-</span>
+          </div>
+          <div>
+            <span class="text-slate-400 block text-[11px]">最近研判时间</span>
+            <span id="drawerTime" class="font-mono text-slate-300 mt-0.5 inline-block">-</span>
+          </div>
+        </div>
+
+        <!-- AI Explanation & Primary Reason -->
+        <div>
+          <h4 class="font-bold text-slate-200 mb-2 flex items-center gap-1.5">
+            <span>🤖</span> 视觉大模型研判理由与证据说明
+          </h4>
+          <div id="drawerExplanation" class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-300 leading-relaxed whitespace-pre-wrap font-sans">
+            暂无研判记录
+          </div>
+        </div>
+
+        <!-- Multi-Device Screenshots -->
+        <div>
+          <h4 class="font-bold text-slate-200 mb-2 flex items-center gap-1.5">
+            <span>🖼️</span> 多端视口截图存证 (点击查看原图)
+          </h4>
+          <div id="drawerScreenshots" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <!-- Injected by app.js -->
+          </div>
+        </div>
+
+        <!-- Network & DNS Probe Details -->
+        <div>
+          <h4 class="font-bold text-slate-200 mb-2 flex items-center gap-1.5">
+            <span>🌐</span> 网络探活与 DNS 解析元数据
+          </h4>
+          <div id="drawerProbeMeta" class="p-3 rounded-xl bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-300 space-y-1">
+            -
+          </div>
+        </div>
+      </div>
+
+      <div class="p-3.5 bg-slate-950 border-t border-slate-800 flex justify-between items-center text-xs">
+        <button onclick="triggerDrawerInstantAudit()" class="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition">
+          ⚡ 现场重跑双端研判
+        </button>
+        <button onclick="closeDetailDrawer()" class="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold transition">
+          关闭
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================================== -->
+  <!-- DRAWER: 终端实时日志流 (Log Drawer) -->
+  <!-- ============================================================================== -->
+  <div id="logDrawer" class="fixed bottom-0 left-0 right-0 max-h-72 bg-slate-950 border-t border-slate-800 z-40 hidden flex flex-col shadow-2xl">
+    <div class="p-2.5 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-xs">
+      <div class="flex items-center gap-2">
+        <span class="text-base">📜</span>
+        <span class="font-bold text-white">巡检引擎实时终端输出</span>
+        <span class="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded">流式追加</span>
+      </div>
+      <button onclick="toggleLogDrawer()" class="text-slate-400 hover:text-white p-1">✕</button>
+    </div>
+    <div id="terminalLogContent" class="flex-1 overflow-y-auto p-3 font-mono text-[11px] text-slate-300 space-y-1 bg-black/60 select-text">
+      <!-- Injected log lines -->
+    </div>
+  </div>
+
+  <!-- JavaScript Application Entry -->
+  <script src="/static/app.js"></script>
+</body>
+</html>
