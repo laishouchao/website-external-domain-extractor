@@ -106,44 +106,10 @@ class DomainInspector:
                     "elapsed_sec": time.time() - start_time
                 }
 
-            # Check 404 upfront in probe -> SKIP Playwright and AI entirely!
-            if probe_res.get("is_404"):
-                self.db.write_inspection_result(
-                    domain=domain,
-                    is_violation=False,
-                    cloaking=False,
-                    ssrf=False,
-                    is_404=True,
-                    primary_violation="页面不存在 (404)",
-                    risk_level="pending",
-                    risk_tags="页面失效(404)",
-                    risk_remark="前置探活检测到404页面失效(跳过截图与大模型，保持待研判)",
-                    detail_dict={
-                        "probe": probe_res,
-                        "is_404": True,
-                        "skipped_screenshot": True,
-                        "reason": "404 Not Found (探活跳过截屏与大模型)"
-                    },
-                    task_id=task_id,
-                    url=target_url
-                )
-                return {
-                    "domain": domain,
-                    "url": target_url,
-                    "status": "error_404",
-                    "is_violation": False,
-                    "is_404": True,
-                    "cloaking": False,
-                    "primary_violation": "页面不存在 (404)",
-                    "risk_level": "pending",
-                    "explanation": "前置探活检测到该页面为 404 Not Found 页面不存在，已直接跳过截图与大模型研判，状态保持待研判",
-                    "probe": probe_res,
-                    "device_results": {},
-                    "elapsed_sec": time.time() - start_time
-                }
-
         # -------------------------------------------------------------
-        # Step 2: Multi-Device Screenshot Capture
+        # Step 2: Multi-Device Emulation & Dynamic Capture per Device
+        # 针对每个端分别发起仿真访问，在每个端内部独立判定是否 404
+        # 若某端为 404 则该端跳过截图与大模型；若某端有真实内容则正常截图并研判
         # -------------------------------------------------------------
         captured_devices = await self.capture_engine.capture_devices(
             url=target_url,
@@ -152,7 +118,7 @@ class DomainInspector:
         )
 
         # -------------------------------------------------------------
-        # Step 3: AI Vision Evaluation per Device
+        # Step 3: Per-Device Evaluation & AI Vision Inference
         # -------------------------------------------------------------
         device_results = {}
         has_any_violation = False
@@ -163,9 +129,10 @@ class DomainInspector:
         desktop_violation = False
         mobile_violation = False
         desktop_is_404 = False
+        mobile_is_404 = False
 
         for dev_key, dev_cap in captured_devices.items():
-            # If device detected 404 during navigation, SKIP AI call entirely!
+            # 本端独立判定：如果该端响应或页面特征为 404，本端直接跳过截图与大模型！
             if dev_cap.get("is_404"):
                 device_results[dev_key] = {
                     "capture": dev_cap,
@@ -173,15 +140,18 @@ class DomainInspector:
                         "is_violation": False,
                         "is_404": True,
                         "primary_category_cn": "页面不存在 (404)",
-                        "explanation": f"[{dev_cap.get('device_name')}]: 页面特征为 404 Not Found，已跳过大模型调用"
+                        "explanation": f"[{dev_cap.get('device_name')}]: 页面特征为 404 Not Found，本端已跳过截图与大模型"
                     }
                 }
                 if dev_cap.get("is_mobile"):
-                    pass
+                    mobile_is_404 = True
                 else:
                     desktop_is_404 = True
-                explanations.append(f"[{dev_cap.get('device_name')}]: 页面显示 404 Not Found 页面不存在 (已跳过截图与AI)")
+                explanations.append(f"[{dev_cap.get('device_name')}]: 页面显示 404 Not Found (本端跳过截图与AI)")
                 continue
+
+            # 本端非 404，因此全端并非都是 404
+            all_are_404 = False
 
             if not dev_cap["success"] or not dev_cap.get("base64_data_uri"):
                 device_results[dev_key] = {
@@ -192,10 +162,9 @@ class DomainInspector:
                         "explanation": f"截图失败: {dev_cap.get('error')}"
                     }
                 }
-                all_are_404 = False
                 continue
 
-            # Run pure vision audit
+            # 本端非 404 且成功截图，送入视觉大模型审核
             ai_res = self.ai_auditor.audit_image(
                 base64_data_uri=dev_cap["base64_data_uri"],
                 domain_name=domain,
@@ -210,14 +179,12 @@ class DomainInspector:
                 cat_cn = ai_res.get("primary_category_cn") or "违规内容"
                 if cat_cn not in violation_categories:
                     violation_categories.append(cat_cn)
-                all_are_404 = False
-
-            if not is_4:
-                all_are_404 = False
 
             if dev_cap.get("is_mobile"):
                 if is_v:
                     mobile_violation = True
+                if is_4:
+                    mobile_is_404 = True
             else:
                 if is_v:
                     desktop_violation = True
@@ -227,7 +194,7 @@ class DomainInspector:
             expl = f"[{dev_cap.get('device_name')}]: {ai_res.get('explanation')}"
             explanations.append(expl)
 
-            # Keep capture without huge base64 in stored json
+            # 存证信息中剔除冗长 base64，保留元数据与文件路径
             cap_copy = dict(dev_cap)
             cap_copy.pop("base64_data_uri", None)
             device_results[dev_key] = {
@@ -236,7 +203,7 @@ class DomainInspector:
             }
 
         # -------------------------------------------------------------
-        # Step 4: Cloaking Cross-Check (PC clean/404 vs Mobile violation)
+        # Step 4: Cloaking Cross-Check (PC 正常/404 vs 移动端 违规)
         # -------------------------------------------------------------
         cloaking_detected = False
         if mobile_violation and (not desktop_violation or desktop_is_404):
@@ -244,10 +211,6 @@ class DomainInspector:
             has_any_violation = True
             if "设备伪装(Cloaking)" not in violation_categories:
                 violation_categories.insert(0, "设备伪装(Cloaking)")
-
-        # Fallback HTTP 404 confirmation
-        if probe_res.get("is_404"):
-            all_are_404 = True
 
         # -------------------------------------------------------------
         # Step 5: Final Compliance Decision & Persistence
