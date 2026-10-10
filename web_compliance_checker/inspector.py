@@ -42,19 +42,24 @@ class DomainInspector:
         probe_res = {}
         if enable_probe:
             probe_res = probe_domain(domain, dns_timeout=1.2, http_timeout=2.5)
-            # Check SSRF
+            # Check SSRF / Intranet Sinkhole -> 安全阻断，保持待研判，绝不误标为违规
             if probe_res.get("is_ssrf"):
+                ip_val = probe_res.get("dns", {}).get("ip") or "私有IP"
                 self.db.write_inspection_result(
                     domain=domain,
-                    is_violation=True,
+                    is_violation=False,
                     cloaking=False,
-                    ssrf=True,
+                    ssrf=False,
                     is_404=False,
-                    primary_violation="SSRF私网拦截",
-                    risk_level="high",
-                    risk_tags="SSRF风险,内网穿透",
-                    risk_remark=f"目标解析至私有IP: {probe_res.get('dns', {}).get('ip')}",
-                    detail_dict={"probe": probe_res, "reason": "SSRF Blocked"},
+                    primary_violation="内网阻断",
+                    risk_level="pending",
+                    risk_tags=f"内网阻断({ip_val})",
+                    risk_remark=f"目标解析至私有/回环IP: {ip_val}(网关沉洞或安全阻断，保持待研判)",
+                    detail_dict={
+                        "probe": probe_res,
+                        "is_ssrf": True,
+                        "reason": f"解析至私有IP ({ip_val})，已安全阻断，未访问外部页面"
+                    },
                     task_id=task_id,
                     url=target_url
                 )
@@ -62,12 +67,12 @@ class DomainInspector:
                     "domain": domain,
                     "url": target_url,
                     "status": "ssrf_blocked",
-                    "is_violation": True,
+                    "is_violation": False,
                     "is_404": False,
                     "cloaking": False,
-                    "primary_violation": "SSRF私网拦截",
-                    "risk_level": "high",
-                    "explanation": f"目标解析至私有IP ({probe_res.get('dns', {}).get('ip')})，已被安全阻断",
+                    "primary_violation": "内网阻断",
+                    "risk_level": "pending",
+                    "explanation": f"目标解析至私有/回环IP ({ip_val})，触发安全防穿透阻断（通常为内网网关或 emn-sec 安全设备下发的沉洞地址），未发起外网渲染，状态保持待研判",
                     "probe": probe_res,
                     "device_results": {},
                     "elapsed_sec": time.time() - start_time

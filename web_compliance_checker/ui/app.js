@@ -114,6 +114,8 @@ async function loadTable() {
       let badgeHtml = '';
       if (item.badge_type === 'violation') {
         badgeHtml = `<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30">🚨 违规异常</span>`;
+      } else if (item.badge_type === 'ssrf_blocked') {
+        badgeHtml = `<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">🛡️ 内网阻断(待判)</span>`;
       } else if (item.badge_type === 'error_404') {
         badgeHtml = `<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">⚠️ 404失效(待判)</span>`;
       } else if (item.badge_type === 'clean_pending') {

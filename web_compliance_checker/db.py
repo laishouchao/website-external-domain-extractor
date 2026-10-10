@@ -221,11 +221,15 @@ class Database:
             # Synthesize display badge
             is_failed = r.get("verify_status") == "verified_failed"
             is_404 = bool(detail_obj.get("is_404") or ("404" in str(r.get("verify_detail", ""))))
+            is_ssrf = bool(detail_obj.get("is_ssrf") or "内网阻断" in str(r.get("risk_tags", "")) or "127.0.0.1" in str(r.get("risk_remark", "")))
             has_inspected = bool(r.get("verify_time"))
 
             if is_failed:
                 badge_type = "violation"
                 badge_label = "🚨 违规异常"
+            elif is_ssrf:
+                badge_type = "ssrf_blocked"
+                badge_label = "🛡️ 内网阻断(待判)"
             elif is_404:
                 badge_type = "error_404"
                 badge_label = "⚠️ 404失效"
@@ -405,7 +409,7 @@ class Database:
         audit_table = self.config.get("audit_table", "compliance_audit_logs")
         conn = self.get_conn()
 
-        is_anomaly = bool(is_violation or cloaking or ssrf)
+        is_anomaly = bool(is_violation or cloaking)
         detail_json = json.dumps(detail_dict, ensure_ascii=False)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -425,8 +429,8 @@ class Database:
                 """, (risk_level, risk_tags, risk_remark, now_str, detail_json, domain))
             else:
                 # Strictly retain unverified & pending!
-                tag = "页面失效(404)" if is_404 else None
-                remark = "探活404页面失效(保持待研判)" if is_404 else "已完成视觉研判未见异常(保持待研判)"
+                tag = "页面失效(404)" if is_404 else (risk_tags if (risk_tags and "内网阻断" in risk_tags) else None)
+                remark = risk_remark if (risk_remark and ("内网" in risk_remark or "私有IP" in risk_remark)) else ("探活404页面失效(保持待研判)" if is_404 else "已完成视觉研判未见异常(保持待研判)")
                 cur.execute(f"""
                     UPDATE {task_table}
                     SET 
