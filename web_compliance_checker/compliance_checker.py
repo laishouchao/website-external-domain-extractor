@@ -20,7 +20,7 @@ if sys.platform.startswith("win"):
     except Exception:
         pass
 
-from config import DEVICE_PROFILES, CONCURRENCY_CONFIG
+from config import DEVICE_PROFILES, CONCURRENCY_CONFIG, DEFAULT_AI_CONFIG
 from pipeline import DecoupledInspectionPipeline
 from db_manager import UnifiedDatabaseManager
 from probe_engine import FastDomainProbeEngine
@@ -86,9 +86,9 @@ async def async_main():
 
     # 爬虫与审核核心参数
     parser.add_argument("--delay", type=float, default=3.0, help="截图前延迟等待时间 (秒，默认 3.0)")
-    parser.add_argument("--api-base", default="http://localhost:11434/v1", help="本地多模态模型 API 服务地址")
-    parser.add_argument("--api-key", default="EMPTY", help="API Key")
-    parser.add_argument("--model", default="qwen2-vl", help="多模态模型标识名称 (如 qwen2-vl, llava, minicpm-v)")
+    parser.add_argument("--api-base", default=DEFAULT_AI_CONFIG.get("api_base", "http://192.168.1.190:8787/v1"), help="AI 审核模型 API 服务地址 (默认局域网超级小爱)")
+    parser.add_argument("--api-key", default=DEFAULT_AI_CONFIG.get("api_key", "EMPTY"), help="API Key")
+    parser.add_argument("--model", default=DEFAULT_AI_CONFIG.get("model", "XiaoAi"), help="AI 审核模型标识名称 (默认 XiaoAi，可选 qwen2-vl 等)")
     parser.add_argument("--devices", default="all", help="测试设备列表 (以逗号分隔，如 desktop_chrome,mobile_iphone_safari 或 all)")
     parser.add_argument("--workers", "-w", dest="workers", type=int, default=None, help="并发巡检工作线程数 (同时设置浏览器与模型并发，如 -w 3)")
     parser.add_argument("--concurrency-browser", type=int, default=CONCURRENCY_CONFIG["default_browser_concurrency"], help="浏览器池最大并发渲染标签页数")

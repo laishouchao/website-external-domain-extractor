@@ -28,5 +28,11 @@
     "task_id": null,
     "risk_level": "pending",
     "verify_status": "unverified"
+  },
+  "ai": {
+    "api_base": "http://192.168.1.190:8787/v1",
+    "model": "XiaoAi",
+    "api_key": "EMPTY",
+    "description": "超级小爱对话引擎 (局域网)"
   }
 }

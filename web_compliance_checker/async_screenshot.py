@@ -244,6 +244,28 @@ class AsyncScreenshotEngine:
                         result["is_cross_domain_redirect"] = True
                         result["redirect_notes"] = f"检测到跨域落地跳转: 从 [{init_host}] 跳转至 [{final_host}]"
 
+                    # 提取页面标题与可视文本摘要 (供多模态或对话大模型深入语义研判)
+                    try:
+                        page_title = await page.title()
+                    except Exception:
+                        page_title = ""
+
+                    try:
+                        page_text = await page.evaluate("""() => {
+                            try {
+                                const body = document.body;
+                                if (!body) return '';
+                                return (body.innerText || body.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 2500);
+                            } catch(e) {
+                                return '';
+                            }
+                        }""")
+                    except Exception:
+                        page_text = ""
+
+                    result["page_title"] = page_title
+                    result["page_text"] = page_text
+
                     # 分屏切片捕获
                     slices = await self._capture_viewport_slices(
                         page=page,
@@ -254,6 +276,11 @@ class AsyncScreenshotEngine:
                         full_page=full_page,
                         max_height=max_height
                     )
+
+                    # 为每个切片注入文本上下文
+                    for s in slices:
+                        s["page_title"] = page_title
+                        s["page_text"] = page_text
 
                     result["status"] = "success"
                     result["slices"] = slices

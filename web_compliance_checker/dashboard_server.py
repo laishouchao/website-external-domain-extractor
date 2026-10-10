@@ -43,6 +43,9 @@ if current_dir not in sys.path:
 from db_manager import UnifiedDatabaseManager
 from export_manager import GLOBAL_EXPORT_MANAGER
 from history_manager import GLOBAL_HISTORY_MANAGER
+from config import AI_MODEL_PRESETS, DEFAULT_AI_CONFIG
+
+CURRENT_AI_CONFIG = dict(DEFAULT_AI_CONFIG)
 
 # ==============================================================================
 # Inspection Job Runner (Global Singleton for Web-Controlled Scanning)
@@ -123,6 +126,16 @@ class InspectionJobRunner:
                 cmd.append("--mock")
             if domain_filter:
                 cmd.extend(["--domain-filter", str(domain_filter)])
+
+            api_base = config.get("api_base") or CURRENT_AI_CONFIG.get("api_base")
+            model = config.get("model") or CURRENT_AI_CONFIG.get("model")
+            api_key = config.get("api_key") or CURRENT_AI_CONFIG.get("api_key", "EMPTY")
+            if api_base:
+                cmd.extend(["--api-base", str(api_base)])
+            if model:
+                cmd.extend(["--model", str(model)])
+            if api_key and api_key != "EMPTY":
+                cmd.extend(["--api-key", str(api_key)])
 
             self.job_id = resume_job_id or datetime.now().strftime("job_%Y%m%d_%H%M%S")
             cmd.extend(["--job-id", self.job_id])
@@ -273,6 +286,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           <h1 class="text-xl font-bold text-white tracking-tight">网页多端仿真与多模态安全巡检控制台</h1>
           <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> 🟢 数据库直连 (website_domain_db)
+          </span>
+          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20" title="当前巡检 AI 审核引擎">
+            <span>🤖</span> <span id="headerAiLabel">AI: 超级小爱 (192.168.1.190)</span>
           </span>
         </div>
         <p class="text-xs text-slate-400 mt-1">集成 PostgreSQL (external_domains / compliance_audit_logs) 与 ClickHouse 实时全量数据 · 调度目标: 总域名库去重独立域名</p>
@@ -475,7 +491,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
         <div class="pt-3 border-t border-slate-800 mt-auto flex justify-between items-center text-xs text-slate-400">
           <span>电子存证哈希: <span class="font-mono text-indigo-400">SHA-256 不可篡改留痕</span></span>
-          <span id="detailFooterMeta" class="font-mono text-slate-500">模型: qwen2-vl</span>
+          <span id="detailFooterMeta" class="font-mono text-slate-500">模型: XiaoAi</span>
         </div>
       </div>
 
@@ -597,6 +613,52 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <button type="button" onclick="setPollInterval(60)" class="interval-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700">60s</button>
               </div>
             </div>
+          </div>
+
+          <!-- AI Engine Selection Box -->
+          <div class="p-3 rounded-xl bg-slate-800/60 border border-purple-900/50 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <label class="font-semibold text-purple-300 flex items-center gap-1.5 text-xs">
+                <span>🤖</span> AI 智能识别与审核引擎配置 (--api-base / --model)
+              </label>
+              <button type="button" onclick="testAiConnection()" id="btnTestAi" class="px-2 py-0.5 bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 border border-purple-500/40 rounded text-[11px] font-semibold transition flex items-center gap-1">
+                <span>⚡</span> 测试连通性
+              </button>
+            </div>
+
+            <!-- Model Presets -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+              <label class="flex items-center gap-2 p-2 rounded bg-slate-900/80 border border-purple-500/40 cursor-pointer">
+                <input type="radio" name="aiPreset" id="presetXiaoAi" checked onchange="selectAiPreset('xiaoai_lan')" class="text-purple-600">
+                <div>
+                  <div class="font-bold text-slate-200 flex items-center gap-1">超级小爱 (局域网) <span class="text-emerald-400 text-[10px] bg-emerald-500/10 px-1 py-0.2 rounded font-normal">当前生效</span></div>
+                  <div class="text-[10px] text-slate-400">192.168.1.190:8787 · 极速对话推理</div>
+                </div>
+              </label>
+              <label class="flex items-center gap-2 p-2 rounded bg-slate-900/80 border border-slate-700/60 cursor-pointer">
+                <input type="radio" name="aiPreset" id="presetQwen" onchange="selectAiPreset('qwen2_vl_local')" class="text-purple-600">
+                <div>
+                  <div class="font-bold text-slate-200">Qwen2-VL 本地多模态</div>
+                  <div class="text-[10px] text-slate-400">localhost:11434 · Ollama 视觉大模型</div>
+                </div>
+              </label>
+            </div>
+
+            <!-- Custom Input fields -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+              <div class="sm:col-span-2">
+                <span class="text-slate-400 block mb-0.5">API 服务地址:</span>
+                <input type="text" id="cfgAiBase" value="http://192.168.1.190:8787/v1" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200 font-mono text-[11px] focus:outline-none focus:border-purple-500">
+              </div>
+              <div>
+                <span class="text-slate-400 block mb-0.5">模型标识:</span>
+                <input type="text" id="cfgAiModel" value="XiaoAi" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-slate-200 font-mono text-[11px] focus:outline-none focus:border-purple-500">
+              </div>
+              <input type="hidden" id="cfgAiKey" value="EMPTY">
+            </div>
+
+            <!-- Test Result Banner -->
+            <div id="aiTestResultBanner" class="hidden text-[11px] px-2.5 py-1 rounded bg-slate-900 border font-mono"></div>
           </div>
 
           <!-- Devices Selection -->
@@ -898,7 +960,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
 
       document.getElementById('detailTime').innerText = `审查时间: ${r.checked_at || '尚未审查'} | 关联记录数: ${r.ref_count || 1} 条 | 来源: ${r.source || 'website_domain_db'}`;
-      document.getElementById('detailFooterMeta').innerText = `模型: ${r.model_used || 'qwen2-vl'} · 数据库: PostgreSQL (website_domain_db)`;
+      document.getElementById('detailFooterMeta').innerText = `模型: ${r.model_used || 'XiaoAi'} · 数据库: PostgreSQL (website_domain_db)`;
 
       const sum = r.verdict_summary || {};
       const isViol = sum.is_violation;
@@ -1081,6 +1143,58 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     // ==========================================
     // 2. Scan Runner Control & Live Logs
     // ==========================================
+    function selectAiPreset(presetId) {
+      const banner = document.getElementById('aiTestResultBanner');
+      if (banner) banner.classList.add('hidden');
+      if (presetId === 'xiaoai_lan') {
+        document.getElementById('cfgAiBase').value = 'http://192.168.1.190:8787/v1';
+        document.getElementById('cfgAiModel').value = 'XiaoAi';
+        document.getElementById('headerAiLabel').innerText = 'AI: 超级小爱 (192.168.1.190)';
+      } else if (presetId === 'qwen2_vl_local') {
+        document.getElementById('cfgAiBase').value = 'http://localhost:11434/v1';
+        document.getElementById('cfgAiModel').value = 'qwen2-vl';
+        document.getElementById('headerAiLabel').innerText = 'AI: Qwen2-VL (Local)';
+      }
+    }
+
+    async function testAiConnection() {
+      const btn = document.getElementById('btnTestAi');
+      const banner = document.getElementById('aiTestResultBanner');
+      const origText = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span>⏳</span> 测试中...';
+      banner.className = 'text-[11px] px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-slate-300 font-mono';
+      banner.classList.remove('hidden');
+      banner.innerHTML = '正在发起 API 握手连通性探测...';
+
+      const apiBase = document.getElementById('cfgAiBase').value.trim();
+      const model = document.getElementById('cfgAiModel').value.trim();
+      const apiKey = document.getElementById('cfgAiKey').value.trim();
+
+      try {
+        const resp = await fetch('/api/ai/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_base: apiBase, model: model, api_key: apiKey })
+        });
+        const data = await resp.json();
+        if (data.success) {
+          banner.className = 'text-[11px] px-2.5 py-1.5 rounded bg-emerald-950/60 border border-emerald-500/50 text-emerald-300 font-mono flex items-center justify-between';
+          banner.innerHTML = `<span>🟢 ${data.message}</span> <span class="bg-emerald-900/60 px-1.5 py-0.5 rounded text-[10px]">${data.latency_ms}ms</span>`;
+          document.getElementById('headerAiLabel').innerText = `AI: ${model} (${data.latency_ms}ms)`;
+        } else {
+          banner.className = 'text-[11px] px-2.5 py-1.5 rounded bg-rose-950/60 border border-rose-500/50 text-rose-300 font-mono';
+          banner.innerHTML = `<span>🔴 ${data.message}</span>`;
+        }
+      } catch (err) {
+        banner.className = 'text-[11px] px-2.5 py-1.5 rounded bg-rose-950/60 border border-rose-500/50 text-rose-300 font-mono';
+        banner.innerHTML = `<span>🔴 请求异常: ${err.message}</span>`;
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+      }
+    }
+
     function openConfigModal(isDaemon = false) {
       document.getElementById('configModal').classList.remove('hidden');
       const loopCheck = document.getElementById('cfgLoop');
@@ -1288,6 +1402,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       if (document.getElementById('devAndroid').checked) devs.push('mobile_android_chrome');
       const devices = devs.length > 0 ? devs.join(',') : 'all';
 
+      const aiBase = document.getElementById('cfgAiBase') ? document.getElementById('cfgAiBase').value.trim() : '';
+      const aiModel = document.getElementById('cfgAiModel') ? document.getElementById('cfgAiModel').value.trim() : '';
+      const aiKey = document.getElementById('cfgAiKey') ? document.getElementById('cfgAiKey').value.trim() : '';
+
       closeConfigModal();
 
       try {
@@ -1303,7 +1421,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             mock: mock,
             dry_run: dryRun,
             enable_probe: enableProbe,
-            enable_dns_probe: enableDnsProbe
+            enable_dns_probe: enableDnsProbe,
+            api_base: aiBase,
+            model: aiModel,
+            api_key: aiKey
           })
         });
         const res = await resp.json();
@@ -1344,6 +1465,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
       if (!isConsoleExpanded) toggleLogConsole();
 
+      const aiBase = document.getElementById('cfgAiBase') ? document.getElementById('cfgAiBase').value.trim() : '';
+      const aiModel = document.getElementById('cfgAiModel') ? document.getElementById('cfgAiModel').value.trim() : '';
+      const aiKey = document.getElementById('cfgAiKey') ? document.getElementById('cfgAiKey').value.trim() : '';
+
       try {
         const resp = await fetch('/api/job/start', {
           method: 'POST',
@@ -1352,7 +1477,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             workers: 1,
             batch_size: 1,
             domain_filter: r.domain,
-            devices: 'all'
+            devices: 'all',
+            api_base: aiBase,
+            model: aiModel,
+            api_key: aiKey
           })
         });
         const res = await resp.json();
@@ -1547,6 +1675,73 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                 self._send_response_bytes(resp_bytes, "application/json", 200)
                 return
 
+            if path == "/api/ai/test":
+                test_api_base = (payload.get("api_base") or CURRENT_AI_CONFIG.get("api_base", "")).strip().rstrip("/")
+                test_model = (payload.get("model") or CURRENT_AI_CONFIG.get("model", "")).strip()
+                test_key = (payload.get("api_key") or CURRENT_AI_CONFIG.get("api_key", "EMPTY")).strip()
+
+                t0 = datetime.now()
+                try:
+                    if test_api_base.endswith("/v1"):
+                        endpoint = f"{test_api_base}/chat/completions"
+                    elif "/chat/completions" in test_api_base or "/api/chat" in test_api_base:
+                        endpoint = test_api_base
+                    else:
+                        endpoint = f"{test_api_base}/v1/chat/completions"
+
+                    req_payload = {
+                        "model": test_model,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "temperature": 0.1
+                    }
+                    req_data = json.dumps(req_payload).encode("utf-8")
+                    req = urllib.request.Request(
+                        endpoint,
+                        data=req_data,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {test_key}",
+                            "User-Agent": "WebComplianceChecker/2.0"
+                        }
+                    )
+                    import ssl
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    with urllib.request.urlopen(req, timeout=8, context=ctx) as res:
+                        elapsed = int((datetime.now() - t0).total_seconds() * 1000)
+                        resp_bytes = json.dumps({
+                            "success": True,
+                            "message": f"连接成功！模型 [{test_model}] 响应正常",
+                            "latency_ms": elapsed,
+                            "model": test_model,
+                            "api_base": test_api_base
+                        }, ensure_ascii=False).encode("utf-8")
+                        self._send_response_bytes(resp_bytes, "application/json", 200)
+                        return
+                except Exception as ex:
+                    elapsed = int((datetime.now() - t0).total_seconds() * 1000)
+                    resp_bytes = json.dumps({
+                        "success": False,
+                        "message": f"连接失败: {ex}",
+                        "latency_ms": elapsed,
+                        "model": test_model,
+                        "api_base": test_api_base
+                    }, ensure_ascii=False).encode("utf-8")
+                    self._send_response_bytes(resp_bytes, "application/json", 200)
+                    return
+
+            if path == "/api/ai/config":
+                if "api_base" in payload:
+                    CURRENT_AI_CONFIG["api_base"] = str(payload["api_base"]).strip()
+                if "model" in payload:
+                    CURRENT_AI_CONFIG["model"] = str(payload["model"]).strip()
+                if "api_key" in payload:
+                    CURRENT_AI_CONFIG["api_key"] = str(payload["api_key"]).strip()
+                resp_bytes = json.dumps({"success": True, "config": CURRENT_AI_CONFIG}, ensure_ascii=False).encode("utf-8")
+                self._send_response_bytes(resp_bytes, "application/json", 200)
+                return
+
             self._send_response_bytes(b"Not Found", "text/plain", 404)
         except Exception as e:
             err_bytes = json.dumps({"success": False, "message": f"Server Error: {e}"}).encode("utf-8")
@@ -1560,6 +1755,14 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             html_bytes = DASHBOARD_HTML.encode("utf-8")
             self._send_response_bytes(html_bytes, "text/html; charset=utf-8", 200)
+            return
+
+        if path == "/api/ai/config":
+            resp_bytes = json.dumps({
+                "current": CURRENT_AI_CONFIG,
+                "presets": AI_MODEL_PRESETS
+            }, ensure_ascii=False).encode("utf-8")
+            self._send_response_bytes(resp_bytes, "application/json", 200)
             return
 
         if path == "/api/job/status":
@@ -1775,7 +1978,7 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                             "task_id": log.get("task_id", 0),
                             "domain": dom,
                             "url": log.get("url") or f"https://{dom}",
-                            "model_used": log.get("model_used", "qwen2-vl"),
+                            "model_used": log.get("model_used") or "XiaoAi",
                             "checked_at": str(log.get("checked_at") or ""),
                             "source": "compliance_audit_logs",
                             "verdict_summary": verdict_summary,
@@ -1901,7 +2104,7 @@ class ComplianceDashboardHandler(BaseHTTPRequestHandler):
                                 "url": f"https://{dom}",
                                 "sample_page_url": row.get("sample_page_url", ""),
                                 "ref_count": int(row.get("ref_count") or 1),
-                                "model_used": log.get("model_used", "qwen2-vl"),
+                                "model_used": log.get("model_used") or "XiaoAi",
                                 "checked_at": str(log.get("checked_at") or row.get("verify_time") or ""),
                                 "source": "compliance_audit_logs",
                                 "risk_remark": row.get("risk_remark", ""),

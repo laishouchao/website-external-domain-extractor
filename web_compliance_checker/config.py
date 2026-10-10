@@ -3,7 +3,38 @@ Configuration module for high-concurrency Web Compliance Checker.
 Includes device profiles, compliance categories, audit prompts, and concurrency tuning constants.
 """
 
+import os
 from typing import Dict, List, Any
+
+# AI 审核模型预设与默认服务配置
+AI_MODEL_PRESETS: List[Dict[str, Any]] = [
+    {
+        "id": "xiaoai_lan",
+        "name": "超级小爱 (局域网 192.168.1.190:8787)",
+        "api_base": "http://192.168.1.190:8787/v1",
+        "model": "XiaoAi",
+        "api_key": "EMPTY",
+        "is_vision": False,
+        "description": "超级小爱对话引擎 (model 参数仅为名称, 不透传给小爱)"
+    },
+    {
+        "id": "qwen2_vl_local",
+        "name": "Qwen2-VL 本地多模态 (Ollama :11434)",
+        "api_base": "http://localhost:11434/v1",
+        "model": "qwen2-vl",
+        "api_key": "EMPTY",
+        "is_vision": True,
+        "description": "本地部署的多模态视觉大模型 (Qwen2-VL / LLaVA)"
+    }
+]
+
+# 默认 AI 识别配置 (优先读取系统环境变量，默认使用局域网 XiaoAi)
+DEFAULT_AI_CONFIG: Dict[str, Any] = {
+    "api_base": os.environ.get("COMPLIANCE_LLM_API_BASE", os.environ.get("LLM_API_BASE", "http://192.168.1.190:8787/v1")),
+    "model": os.environ.get("COMPLIANCE_LLM_MODEL", os.environ.get("LLM_MODEL", "XiaoAi")),
+    "api_key": os.environ.get("COMPLIANCE_LLM_API_KEY", os.environ.get("LLM_API_KEY", "EMPTY"))
+}
+
 
 # 预设设备配置文件
 DEVICE_PROFILES: List[Dict[str, Any]] = [

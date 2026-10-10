@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Callable
 
-from config import DEVICE_PROFILES, COMPLIANCE_CATEGORIES, CONCURRENCY_CONFIG
+from config import DEVICE_PROFILES, COMPLIANCE_CATEGORIES, CONCURRENCY_CONFIG, DEFAULT_AI_CONFIG
 from browser_pool import AsyncBrowserPool
 from async_screenshot import AsyncScreenshotEngine
 from async_llm_analyzer import AsyncMultimodalSafetyAnalyzer
@@ -265,9 +265,9 @@ class DecoupledInspectionPipeline:
     """
     def __init__(
         self,
-        api_base: str = "http://localhost:11434/v1",
-        api_key: str = "EMPTY",
-        model: str = "qwen2-vl",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
         browser_concurrency: int = 4,
         llm_concurrency: int = 2,
         output_dir: str = "output",
@@ -276,8 +276,9 @@ class DecoupledInspectionPipeline:
     ):
         self.output_dir = output_dir
         self.is_mock = is_mock
-        self.model = model
-        self.api_base = api_base
+        self.model = model or DEFAULT_AI_CONFIG.get("model", "XiaoAi")
+        self.api_base = (api_base or DEFAULT_AI_CONFIG.get("api_base", "http://192.168.1.190:8787/v1")).rstrip("/")
+        self.api_key = api_key or DEFAULT_AI_CONFIG.get("api_key", "EMPTY")
         self.browser_concurrency = browser_concurrency
         self.llm_concurrency = llm_concurrency
 
@@ -288,9 +289,9 @@ class DecoupledInspectionPipeline:
         self.browser_pool = AsyncBrowserPool(max_concurrency=browser_concurrency, headless=headless)
         self.screenshot_engine = AsyncScreenshotEngine(self.browser_pool, output_dir=self.screenshot_dir)
         self.analyzer = AsyncMultimodalSafetyAnalyzer(
-            api_base=api_base,
-            api_key=api_key,
-            model=model,
+            api_base=self.api_base,
+            api_key=self.api_key,
+            model=self.model,
             max_concurrency=llm_concurrency
         )
 
@@ -377,9 +378,23 @@ class DecoupledInspectionPipeline:
             url, dev_id, slice_info, is_success, err_msg = item
             tracker = self.trackers[url]
 
-            if is_success and slice_info.get("image_base64"):
+            # 组装语义与多端上下文
+            dev_obj = tracker.devices.get(dev_id)
+            context_dict = {
+                "url": url,
+                "device_id": dev_id,
+                "device_name": dev_obj.device_name if dev_obj else dev_id,
+                "final_url": dev_obj.base_info.get("final_url") if dev_obj else url,
+                "redirect_notes": dev_obj.base_info.get("redirect_notes") if dev_obj else "",
+                "page_title": slice_info.get("page_title", ""),
+                "page_text": slice_info.get("page_text", ""),
+                "slice_name": slice_info.get("slice_name", "")
+            }
+
+            if is_success:
                 verdict = await self.analyzer.analyze_image_async(
-                    slice_info["image_base64"],
+                    slice_info.get("image_base64"),
+                    context=context_dict,
                     is_mock=self.is_mock
                 )
             else:

@@ -8,23 +8,27 @@ import json
 import re
 import urllib.request
 import urllib.error
-import ssl
-from typing import Dict, Any, Optional
+import os
+import sys
 
-from config import SYSTEM_PROMPT, USER_PROMPT, COMPLIANCE_CATEGORIES
+_pkg_dir = os.path.dirname(os.path.abspath(__file__))
+if _pkg_dir not in sys.path:
+    sys.path.insert(0, _pkg_dir)
+
+from config import SYSTEM_PROMPT, USER_PROMPT, COMPLIANCE_CATEGORIES, DEFAULT_AI_CONFIG
 
 
 class MultimodalSafetyAnalyzer:
     def __init__(
         self,
-        api_base: str = "http://localhost:11434/v1",
-        api_key: str = "EMPTY",
-        model: str = "qwen2-vl",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
         timeout: int = 60
     ):
-        self.api_base = api_base.rstrip("/")
-        self.api_key = api_key
-        self.model = model
+        self.api_base = (api_base or DEFAULT_AI_CONFIG.get("api_base", "http://192.168.1.190:8787/v1")).rstrip("/")
+        self.api_key = api_key or DEFAULT_AI_CONFIG.get("api_key", "EMPTY")
+        self.model = model or DEFAULT_AI_CONFIG.get("model", "XiaoAi")
         self.timeout = timeout
 
     def _extract_json_from_text(self, text: str) -> Optional[Dict[str, Any]]:
@@ -63,37 +67,30 @@ class MultimodalSafetyAnalyzer:
 
         return None
 
-    def _build_openai_payload(self, image_base64: str) -> Dict[str, Any]:
+    def _build_openai_payload(self, image_base64: str, prompt_text: Optional[str] = None) -> Dict[str, Any]:
         """
-        构建 OpenAI 兼容的多模态 Chat Completion 请求载荷。
+        构建 OpenAI 兼容的多模态或文本对话 Chat Completion 请求载荷。
         """
-        image_url = f"data:image/png;base64,{image_base64}"
+        is_xiaoai = "xiaoai" in self.model.lower()
+        is_vision = not is_xiaoai and ("vl" in self.model.lower() or "vision" in self.model.lower() or "llava" in self.model.lower())
+        prompt = prompt_text or USER_PROMPT
+
+        if is_vision and image_base64:
+            user_content = [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
+            ]
+        else:
+            user_content = prompt
+
         return {
             "model": self.model,
             "messages": [
-                {
-                    "role": "system",
-                    "content": SYSTEM_PROMPT
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": USER_PROMPT
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": image_url
-                            }
-                        }
-                    ]
-                }
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_content}
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0.05,
-            "max_tokens": 512
+            "temperature": 0.05
         }
 
     def _build_ollama_native_payload(self, image_base64: str) -> Dict[str, Any]:

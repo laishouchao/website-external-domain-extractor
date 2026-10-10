@@ -9,23 +9,28 @@ import asyncio
 import urllib.request
 import urllib.error
 import ssl
-from typing import Dict, Any, Optional
+import os
+import sys
 
-from config import SYSTEM_PROMPT, USER_PROMPT
+_pkg_dir = os.path.dirname(os.path.abspath(__file__))
+if _pkg_dir not in sys.path:
+    sys.path.insert(0, _pkg_dir)
+
+from config import SYSTEM_PROMPT, USER_PROMPT, DEFAULT_AI_CONFIG
 
 
 class AsyncMultimodalSafetyAnalyzer:
     def __init__(
         self,
-        api_base: str = "http://localhost:11434/v1",
-        api_key: str = "EMPTY",
-        model: str = "qwen2-vl",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
         max_concurrency: int = 2,
         timeout: int = 60
     ):
-        self.api_base = api_base.rstrip("/")
-        self.api_key = api_key
-        self.model = model
+        self.api_base = (api_base or DEFAULT_AI_CONFIG.get("api_base", "http://192.168.1.190:8787/v1")).rstrip("/")
+        self.api_key = api_key or DEFAULT_AI_CONFIG.get("api_key", "EMPTY")
+        self.model = model or DEFAULT_AI_CONFIG.get("model", "XiaoAi")
         self.timeout = timeout
         self._semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -75,9 +80,15 @@ class AsyncMultimodalSafetyAnalyzer:
             resp_bytes = response.read()
             return resp_bytes.decode("utf-8")
 
-    async def analyze_image_async(self, image_base64: str, is_mock: bool = False) -> Dict[str, Any]:
+    async def analyze_image_async(
+        self,
+        image_base64: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        is_mock: bool = False
+    ) -> Dict[str, Any]:
         """
-        受控并发的大模型推理请求调用
+        受控并发的大模型推理请求调用。
+        智能适配视觉模型 (Qwen2-VL) 与对话/推理大模型 (XiaoAi 局域网引擎)。
         """
         if is_mock:
             await asyncio.sleep(0.05)  # 仿真微量异步耗时
@@ -85,14 +96,56 @@ class AsyncMultimodalSafetyAnalyzer:
 
         async with self._semaphore:
             is_ollama_native = "/api/chat" in self.api_base
+            is_xiaoai = "xiaoai" in self.model.lower()
+            is_vision_model = (
+                not is_xiaoai
+                and (
+                    "vl" in self.model.lower()
+                    or "vision" in self.model.lower()
+                    or "llava" in self.model.lower()
+                    or "minicpm" in self.model.lower()
+                    or is_ollama_native
+                )
+            )
+
+            # 提取页面与网络环境上下文
+            ctx = context or {}
+            target_url = ctx.get("url", "")
+            final_url = ctx.get("final_url") or target_url
+            device_name = ctx.get("device_name", "通用设备")
+            page_title = ctx.get("page_title", "")
+            page_text = ctx.get("page_text", "")
+            redirect_notes = ctx.get("redirect_notes", "")
+            slice_name = ctx.get("slice_name", "")
+
+            prompt_parts = [USER_PROMPT]
+            if target_url:
+                prompt_parts.append(f"\n【目标 URL】: {target_url}")
+            if final_url and final_url != target_url:
+                prompt_parts.append(f"【落地页 URL】: {final_url}")
+            if device_name:
+                prompt_parts.append(f"【访问设备端】: {device_name}")
+            if redirect_notes:
+                prompt_parts.append(f"【重定向/跳转信息】: {redirect_notes}")
+            if page_title:
+                prompt_parts.append(f"【网页标题】: {page_title}")
+            if slice_name:
+                prompt_parts.append(f"【视口切片位置】: {slice_name}")
+            if page_text:
+                prompt_parts.append(f"【页面文本内容摘要】:\n{page_text[:1600]}")
+
+            composite_user_prompt = "\n".join(prompt_parts)
 
             if is_ollama_native:
                 endpoint_url = self.api_base
+                msg_user = {"role": "user", "content": composite_user_prompt}
+                if image_base64 and is_vision_model:
+                    msg_user["images"] = [image_base64]
                 payload = {
                     "model": self.model,
                     "messages": [
                         {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": USER_PROMPT, "images": [image_base64]}
+                        msg_user
                     ],
                     "stream": False,
                     "format": "json",
@@ -106,22 +159,24 @@ class AsyncMultimodalSafetyAnalyzer:
                 else:
                     endpoint_url = f"{self.api_base}/v1/chat/completions"
 
-                image_url = f"data:image/png;base64,{image_base64}"
+                if is_vision_model and image_base64:
+                    image_url = f"data:image/png;base64,{image_base64}"
+                    user_content = [
+                        {"type": "text", "text": composite_user_prompt},
+                        {"type": "image_url", "image_url": {"url": image_url}}
+                    ]
+                else:
+                    # XiaoAi 局域网大模型引擎或纯文本审查通道
+                    user_content = composite_user_prompt
+
                 payload = {
                     "model": self.model,
                     "messages": [
                         {"role": "system", "content": SYSTEM_PROMPT},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": USER_PROMPT},
-                                {"type": "image_url", "image_url": {"url": image_url}}
-                            ]
-                        }
+                        {"role": "user", "content": user_content}
                     ],
                     "response_format": {"type": "json_object"},
-                    "temperature": 0.05,
-                    "max_tokens": 512
+                    "temperature": 0.05
                 }
 
             try:
