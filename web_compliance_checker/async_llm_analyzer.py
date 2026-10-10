@@ -88,7 +88,7 @@ class AsyncMultimodalSafetyAnalyzer:
     ) -> Dict[str, Any]:
         """
         受控并发的大模型推理请求调用。
-        智能适配视觉模型 (Qwen2-VL) 与对话/推理大模型 (XiaoAi 局域网引擎)。
+        智能适配多模态视觉模型与对话/推理大模型 (超级小爱 XiaoAi 局域网引擎)。
         """
         if is_mock:
             await asyncio.sleep(0.05)  # 仿真微量异步耗时

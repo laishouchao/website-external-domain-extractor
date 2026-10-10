@@ -627,19 +627,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </div>
 
             <!-- Model Presets -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+            <div class="text-[11px]">
               <label class="flex items-center gap-2 p-2 rounded bg-slate-900/80 border border-purple-500/40 cursor-pointer">
                 <input type="radio" name="aiPreset" id="presetXiaoAi" checked onchange="selectAiPreset('xiaoai_lan')" class="text-purple-600">
                 <div>
                   <div class="font-bold text-slate-200 flex items-center gap-1">超级小爱 (局域网) <span class="text-emerald-400 text-[10px] bg-emerald-500/10 px-1 py-0.2 rounded font-normal">当前生效</span></div>
-                  <div class="text-[10px] text-slate-400">192.168.1.190:8787 · 极速对话推理</div>
-                </div>
-              </label>
-              <label class="flex items-center gap-2 p-2 rounded bg-slate-900/80 border border-slate-700/60 cursor-pointer">
-                <input type="radio" name="aiPreset" id="presetQwen" onchange="selectAiPreset('qwen2_vl_local')" class="text-purple-600">
-                <div>
-                  <div class="font-bold text-slate-200">Qwen2-VL 本地多模态</div>
-                  <div class="text-[10px] text-slate-400">localhost:11434 · Ollama 视觉大模型</div>
+                  <div class="text-[10px] text-slate-400">http://192.168.1.190:8787/v1 · 极速对话推理合规引擎</div>
                 </div>
               </label>
             </div>
@@ -1150,10 +1143,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         document.getElementById('cfgAiBase').value = 'http://192.168.1.190:8787/v1';
         document.getElementById('cfgAiModel').value = 'XiaoAi';
         document.getElementById('headerAiLabel').innerText = 'AI: 超级小爱 (192.168.1.190)';
-      } else if (presetId === 'qwen2_vl_local') {
-        document.getElementById('cfgAiBase').value = 'http://localhost:11434/v1';
-        document.getElementById('cfgAiModel').value = 'qwen2-vl';
-        document.getElementById('headerAiLabel').innerText = 'AI: Qwen2-VL (Local)';
       }
     }
 

@@ -165,8 +165,8 @@ class AsyncScreenshotEngine:
         slices_count: int = 1,
         full_page: bool = False,
         max_height: int = 2500,
-        timeout_ms: int = 25000,
-        max_retries: int = 2
+        timeout_ms: int = 12000,
+        max_retries: int = 1
     ) -> Dict[str, Any]:
         """
         在指定设备环境下对目标 URL 进行异步抓取、分屏切片与存证
@@ -197,15 +197,27 @@ class AsyncScreenshotEngine:
 
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         clean_name = "".join([c if c.isalnum() else "_" for c in url])[:30]
+        start_time = time.time()
+        print(f"  [*] [仿真渲染] 开始抓取设备 [{profile_name}] -> {url} ...", flush=True)
 
         for attempt in range(1, max_retries + 1):
             try:
                 async with self.browser_pool.acquire_context(profile) as page:
-                    # 导航并捕获 HTTP 级别重定向链
+                    # 导航：优先 commit (确保响应头快速返回，避免 Cloudflare 盾/长轮询导致死等)
+                    response = None
                     try:
-                        response = await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+                        response = await page.goto(url, wait_until="commit", timeout=timeout_ms)
                     except PlaywrightError:
-                        response = await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        try:
+                            response = await page.goto(url, wait_until="domcontentloaded", timeout=min(timeout_ms, 8000))
+                        except Exception:
+                            pass
+
+                    # 尝试等待 DOM 结构就绪 (最多等待 3 秒，若超时不阻塞后续截屏)
+                    try:
+                        await page.wait_for_load_state("domcontentloaded", timeout=3000)
+                    except Exception:
+                        pass
 
                     # 收集 HTTP 301/302 重定向跃点
                     redirect_hops = []
@@ -221,17 +233,21 @@ class AsyncScreenshotEngine:
 
                     result["redirect_hops"] = redirect_hops
                     pre_scroll_url = page.url
-                    if response:
-                        result["http_status"] = response.status
+                    http_status = response.status if response else None
+                    result["http_status"] = http_status
 
-                    # 延时交互与动态内容渲染 (激发懒加载与前端延时 JS 跳转)
-                    await self._simulate_smooth_scroll(page, delay_seconds)
+                    # 延时交互与动态内容渲染:
+                    # 若页面明确返回 4xx/5xx 错误或封禁拦截状态码，无需漫长下滚等待，快速截屏留证
+                    if http_status and http_status >= 400:
+                        await asyncio.sleep(0.3)
+                    else:
+                        await self._simulate_smooth_scroll(page, delay_seconds)
 
                     # 检查是否发生前端延时 JS 跳转 (如 location.href / meta refresh)
                     post_scroll_url = page.url
                     if post_scroll_url != pre_scroll_url:
                         # 发生了前端延时重定向，额外休眠等待落地页重绘稳定
-                        await asyncio.sleep(1.5)
+                        await asyncio.sleep(1.0)
 
                     final_url = page.url
                     result["final_url"] = final_url
@@ -292,13 +308,17 @@ class AsyncScreenshotEngine:
                         result["screenshot_sha256"] = slices[0]["screenshot_sha256"]
                         result["image_base64"] = slices[0]["image_base64"]
 
+                    elapsed = time.time() - start_time
+                    print(f"  [+] [渲染完成] 设备 [{profile_name}] 耗时 {elapsed:.1f}s | HTTP {http_status or 'N/A'} | 切片数 {len(slices)}", flush=True)
                     return result
 
             except Exception as e:
                 if attempt == max_retries:
+                    elapsed = time.time() - start_time
                     result["status"] = "error"
                     result["error"] = f"尝试 {max_retries} 次失败: {str(e)}"
+                    print(f"  [-] [渲染失败] 设备 [{profile_name}] 耗时 {elapsed:.1f}s | 错误: {str(e)[:100]}", flush=True)
                     return result
-                await asyncio.sleep(1.0 * attempt)
+                await asyncio.sleep(0.5 * attempt)
 
         return result

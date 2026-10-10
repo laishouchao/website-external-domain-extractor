@@ -486,7 +486,7 @@ class PostgresClient:
                 "verify_status": final_verify_status,
                 "verify_time": now_str,
                 "summary": f"AI多模态深度巡检: {'检出违规内容' if is_violation else '合规安全'}",
-                "model_used": (full_record or {}).get("model_used", "qwen2-vl"),
+                "model_used": (full_record or {}).get("model_used", "XiaoAi"),
                 "is_violation": is_violation,
                 "overall_risk_level": risk_norm,
                 "primary_violation": primary_violation,
@@ -589,7 +589,7 @@ class PostgresClient:
         cloaking_notes = summary.get("cloaking_notes") or ""
 
         cat_probs = json.dumps(summary.get("category_probabilities", {}), ensure_ascii=False)
-        model_used = result_record.get("model_used", "qwen2-vl")
+        model_used = result_record.get("model_used", "XiaoAi")
         full_report_json = json.dumps(result_record, ensure_ascii=False)
 
         stats = summary.get("stats", {})

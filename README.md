@@ -118,7 +118,7 @@
 ---
 
 ### 10. 网页多端仿真与多模态安全巡检控制台 (巡检子系统)
-> 联动全量外部域名数据库（PostgreSQL / ClickHouse），支持轻量级 DNS/HTTP 快速探活、桌面端与移动端双端无头仿真渲染、Playwright 隐身防爬指纹绕过、局域网大模型（超级小爱 XiaoAi / 本地 Qwen2-VL）智能违规研判、证据链留存与一键研判报表导出。
+> 联动全量外部域名数据库（PostgreSQL / ClickHouse），支持轻量级 DNS/HTTP 快速探活、桌面端与移动端双端无头仿真渲染、Playwright 隐身防爬指纹绕过、局域网大模型（超级小爱 XiaoAi）智能违规研判、证据链留存与一键研判报表导出。
 
 ![多端仿真安全巡检控制台](docs/images/10_compliance_checker_dashboard.png)
 ![AI智能识别配置与连通性测试](docs/images/11_compliance_checker_ai_config.png)

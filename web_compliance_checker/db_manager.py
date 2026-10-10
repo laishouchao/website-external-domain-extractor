@@ -355,7 +355,7 @@ class UnifiedDatabaseManager:
                     "prob_adware": float(cat_probs.get("malicious_adware", {}).get("max_probability", 0.0)),
                     "total_devices_tested": int(stats.get("total_tested_devices", 1)),
                     "violation_devices_count": int(stats.get("violation_device_count", 0)),
-                    "model_used": result_record.get("model_used", "qwen2-vl"),
+                    "model_used": result_record.get("model_used", "XiaoAi"),
                     "report_json": json.dumps(result_record, ensure_ascii=False)
                 }
 

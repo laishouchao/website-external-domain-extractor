@@ -376,67 +376,81 @@ class DecoupledInspectionPipeline:
                 break
 
             url, dev_id, slice_info, is_success, err_msg = item
-            tracker = self.trackers[url]
+            try:
+                tracker = self.trackers[url]
 
-            # 组装语义与多端上下文
-            dev_obj = tracker.devices.get(dev_id)
-            context_dict = {
-                "url": url,
-                "device_id": dev_id,
-                "device_name": dev_obj.device_name if dev_obj else dev_id,
-                "final_url": dev_obj.base_info.get("final_url") if dev_obj else url,
-                "redirect_notes": dev_obj.base_info.get("redirect_notes") if dev_obj else "",
-                "page_title": slice_info.get("page_title", ""),
-                "page_text": slice_info.get("page_text", ""),
-                "slice_name": slice_info.get("slice_name", "")
-            }
-
-            if is_success:
-                verdict = await self.analyzer.analyze_image_async(
-                    slice_info.get("image_base64"),
-                    context=context_dict,
-                    is_mock=self.is_mock
-                )
-            else:
-                verdict = {
-                    "is_violation": False,
-                    "risk_level": "UNKNOWN",
-                    "confidence": 0.0,
-                    "primary_violation": "capture_failed",
-                    "categories": [],
-                    "violation_details": f"截图抓取失败: {err_msg}",
-                    "visual_elements_found": []
+                # 组装语义与多端上下文
+                dev_obj = tracker.device_collectors.get(dev_id)
+                dev_name = dev_obj.device_name if dev_obj else dev_id
+                slice_title = slice_info.get("slice_name", "视口切片")
+                context_dict = {
+                    "url": url,
+                    "device_id": dev_id,
+                    "device_name": dev_name,
+                    "final_url": dev_obj.base_info.get("final_url") if dev_obj else url,
+                    "redirect_notes": dev_obj.base_info.get("redirect_notes") if dev_obj else "",
+                    "page_title": slice_info.get("page_title", ""),
+                    "page_text": slice_info.get("page_text", ""),
+                    "slice_name": slice_title
                 }
 
-            await tracker.add_slice_result(dev_id, slice_info, verdict)
-            self.queue.task_done()
+                if is_success:
+                    if not self.is_mock:
+                        print(f"  [*] [AI研判] 设备 [{dev_name}] 切片 [{slice_title}] -> 发起 {self.model} 模型判定...", flush=True)
+                    verdict = await self.analyzer.analyze_image_async(
+                        slice_info.get("image_base64"),
+                        context=context_dict,
+                        is_mock=self.is_mock
+                    )
+                    if not self.is_mock:
+                        is_viol = verdict.get("is_violation", False)
+                        risk_lvl = verdict.get("risk_level", "SAFE")
+                        p_cat = verdict.get("primary_violation", "normal")
+                        print(f"  [+] [AI研判完成] 设备 [{dev_name}] -> {'违规!' if is_viol else '正常'} (风险: {risk_lvl}, 分类: {p_cat})", flush=True)
+                else:
+                    verdict = {
+                        "is_violation": False,
+                        "risk_level": "UNKNOWN",
+                        "confidence": 0.0,
+                        "primary_violation": "capture_failed",
+                        "categories": [],
+                        "violation_details": f"截图抓取失败: {err_msg}",
+                        "visual_elements_found": []
+                    }
 
-            # 当整个 URL 的全部设备与切片均已完成时触发聚合与流式写入
-            if tracker.done_event.is_set():
-                async with self._write_lock:
-                    if not getattr(tracker, "_processed", False):
-                        tracker._processed = True
-                        completed_urls_counter[0] += 1
-                        current_idx = completed_urls_counter[0]
+                await tracker.add_slice_result(dev_id, slice_info, verdict)
 
-                        aggregated_devices = tracker.get_aggregated_devices()
-                        verdict_summary = aggregate_device_results(url, aggregated_devices)
+                # 当整个 URL 的全部设备与切片均已完成时触发聚合与流式写入
+                if tracker.done_event.is_set():
+                    async with self._write_lock:
+                        if not getattr(tracker, "_processed", False):
+                            tracker._processed = True
+                            completed_urls_counter[0] += 1
+                            current_idx = completed_urls_counter[0]
 
-                        final_record = {
-                            "url": url,
-                            "checked_at": datetime.now(timezone.utc).isoformat(),
-                            "model_used": self.model,
-                            "api_endpoint": self.api_base,
-                            "verdict_summary": verdict_summary,
-                            "device_inspections": aggregated_devices
-                        }
+                            aggregated_devices = tracker.get_aggregated_devices()
+                            verdict_summary = aggregate_device_results(url, aggregated_devices)
 
-                        all_results_list.append(final_record)
-                        f_jsonl.write(json.dumps(final_record, ensure_ascii=False) + "\n")
-                        f_jsonl.flush()
+                            final_record = {
+                                "url": url,
+                                "checked_at": datetime.now(timezone.utc).isoformat(),
+                                "model_used": self.model,
+                                "api_endpoint": self.api_base,
+                                "verdict_summary": verdict_summary,
+                                "device_inspections": aggregated_devices
+                            }
 
-                        if progress_callback:
-                            progress_callback(current_idx, total_urls, final_record)
+                            all_results_list.append(final_record)
+                            f_jsonl.write(json.dumps(final_record, ensure_ascii=False) + "\n")
+                            f_jsonl.flush()
+
+                            if progress_callback:
+                                progress_callback(current_idx, total_urls, final_record)
+            except Exception as e:
+                import traceback
+                print(f"[!] [AI消费者异常] 处理 {url} ({dev_id}) 出错: {e}\n{traceback.format_exc()}", flush=True)
+            finally:
+                self.queue.task_done()
 
     async def run_pipeline(
         self,

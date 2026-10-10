@@ -43,7 +43,8 @@ def progress_reporter(current_idx: int, total_count: int, result: Dict[str, Any]
 
     print(
         f"[{current_idx}/{total_count}] {status_tag} {url} "
-        f"| 风险等级: {risk_level} | 主要类型: {primary_cat}{cloaking_tag}"
+        f"| 风险等级: {risk_level} | 主要类型: {primary_cat}{cloaking_tag}",
+        flush=True
     )
 
 
@@ -88,7 +89,7 @@ async def async_main():
     parser.add_argument("--delay", type=float, default=3.0, help="截图前延迟等待时间 (秒，默认 3.0)")
     parser.add_argument("--api-base", default=DEFAULT_AI_CONFIG.get("api_base", "http://192.168.1.190:8787/v1"), help="AI 审核模型 API 服务地址 (默认局域网超级小爱)")
     parser.add_argument("--api-key", default=DEFAULT_AI_CONFIG.get("api_key", "EMPTY"), help="API Key")
-    parser.add_argument("--model", default=DEFAULT_AI_CONFIG.get("model", "XiaoAi"), help="AI 审核模型标识名称 (默认 XiaoAi，可选 qwen2-vl 等)")
+    parser.add_argument("--model", default=DEFAULT_AI_CONFIG.get("model", "XiaoAi"), help="AI 审核模型标识名称 (默认 XiaoAi 超级小爱)")
     parser.add_argument("--devices", default="all", help="测试设备列表 (以逗号分隔，如 desktop_chrome,mobile_iphone_safari 或 all)")
     parser.add_argument("--workers", "-w", dest="workers", type=int, default=None, help="并发巡检工作线程数 (同时设置浏览器与模型并发，如 -w 3)")
     parser.add_argument("--concurrency-browser", type=int, default=CONCURRENCY_CONFIG["default_browser_concurrency"], help="浏览器池最大并发渲染标签页数")
@@ -329,7 +330,7 @@ async def async_main():
 
                 distinct_target_urls = list(url_to_tasks.keys())
                 if not args.quiet:
-                    print(f"[*] 存活目标去重后实际访问 URL: {len(distinct_target_urls)} 个，启动多端仿真与多模态流水线...")
+                    print(f"[*] 存活目标去重后实际访问 URL: {len(distinct_target_urls)} 个，启动多端仿真与多模态流水线...", flush=True)
 
                 # 运行流水线
                 batch_summary = await pipeline.run_pipeline(

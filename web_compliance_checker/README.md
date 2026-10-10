@@ -1,8 +1,8 @@
 # Web Compliance Checker (高并发工程化多端合规审查系统)
 
-基于 **异步浏览器常驻池（Playwright Async Browser Pool）** 与 **本地多模态大模型（VLM）** 构建的高性能网页安全巡检系统。
+基于 **异步浏览器常驻池（Playwright Async Browser Pool）** 与 **超级小爱大模型引擎（XiaoAi）** 构建的高性能网页安全巡检系统。
 
-本系统针对网络黑灰产（涉黄、涉赌、涉诈、暴恐、涉政违禁、恶意广告）演化出的**“设备端伪装欺诈（Cloaking）”**策略，利用高并发多端仿真模拟（涵盖 PC 桌面端、Retina 屏、iPhone 移动端、Android 移动端及 iPad 平板端）并结合延迟动态渲染截屏与数字证据存证（SHA-256），调用本地部署的多模态视觉大模型（如 Qwen2.5-VL、Qwen2-VL、LLaVA、MiniCPM-V 等）完成自动化安全审查，并以标准 JSON/流式 JSONL 输出。
+本系统针对网络黑灰产（涉黄、涉赌、涉诈、暴恐、涉政违禁、恶意广告）演化出的**“设备端伪装欺诈（Cloaking）”**策略，利用高并发多端仿真模拟（涵盖 PC 桌面端、Retina 屏、iPhone 移动端、Android 移动端及 iPad 平板端）并结合延迟动态渲染截屏与数字证据存证（SHA-256），调用局域网大模型（如超级小爱 XiaoAi）完成自动化安全审查，并以标准 JSON/流式 JSONL 输出。
 
 ---
 
@@ -62,13 +62,13 @@ python compliance_checker.py https://example.com
 python compliance_checker.py --file sample_urls.txt
 ```
 
-### 3. 高并发参数调优与本地模型指定
-以本地 vLLM 或 Ollama 部署的 `Qwen2.5-VL-7B` 为例：
+### 3. 高并发参数调优与模型指定
+以局域网超级小爱大模型为例：
 ```powershell
 python compliance_checker.py --file sample_urls.txt `
-  --api-base http://localhost:8000/v1 `
-  --model Qwen/Qwen2.5-VL-7B-Instruct `
-  --concurrency-browser 6 `
+  --api-base http://192.168.1.190:8787/v1 `
+  --model XiaoAi `
+  --concurrency-browser 4 `
   --concurrency-llm 2 `
   --delay 2.5
 ```
@@ -87,8 +87,8 @@ python compliance_checker.py --file sample_urls.txt --mock
 | `urls` / `--url` | 字符串 | 无 | 单个或多个待测目标 URL |
 | `--file`, `-f` | 路径 | 无 | 待审核 URL 文本文件路径（每行一个） |
 | `--delay` | 浮点数 | `3.0` | 页面加载后的延迟等待秒数（等待异步 JS 与跳转） |
-| `--api-base` | 字符串 | `http://localhost:11434/v1` | 本地多模态模型服务地址 |
-| `--model` | 字符串 | `qwen2-vl` | 模型名称 (如 `qwen2.5-vl`, `qwen2-vl`) |
+| `--api-base` | 字符串 | `http://192.168.1.190:8787/v1` | 局域网超级小爱模型服务地址 |
+| `--model` | 字符串 | `XiaoAi` | 模型标识名称 (默认 `XiaoAi`) |
 | `--concurrency-browser`| 整数 | `4` | 浏览器池最大并行渲染标签页数 |
 | `--concurrency-llm` | 整数 | `2` | 模型推理最大并发请求数（保护本地显存） |
 | `--db` | 开关 | 否 | 启用数据库驱动模式（从数据库读取待巡检域名并将结果回写入库） |
@@ -179,10 +179,10 @@ python compliance_checker.py --db --domain-filter qq.com --dry-run
 # 4. 离线仿真测试 (跳过真实大模型调用，用于全链路冒烟测试)
 python compliance_checker.py --db --db-batch-size 5 --mock
 
-# 5. 真实生产大模型巡检 (使用本地部署的 Qwen2-VL)
+# 5. 真实生产大模型巡检 (使用局域网超级小爱 XiaoAi)
 python compliance_checker.py --db `
-  --api-base http://localhost:11434/v1 `
-  --model qwen2-vl `
+  --api-base http://192.168.1.190:8787/v1 `
+  --model XiaoAi `
   --concurrency-browser 4 `
   --concurrency-llm 2 `
   --db-batch-size 50
@@ -198,7 +198,7 @@ python compliance_checker.py --db --db-loop --db-poll-interval 15
 {
   "url": "https://example.com",
   "checked_at": "2026-09-28T14:58:00.000000+00:00",
-  "model_used": "qwen2-vl",
+  "model_used": "XiaoAi",
   "verdict_summary": {
     "is_violation": true,
     "overall_risk_level": "HIGH",

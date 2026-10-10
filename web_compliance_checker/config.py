@@ -6,7 +6,7 @@ Includes device profiles, compliance categories, audit prompts, and concurrency 
 import os
 from typing import Dict, List, Any
 
-# AI 审核模型预设与默认服务配置
+# AI 审核模型预设与默认服务配置 (超级小爱局域网引擎)
 AI_MODEL_PRESETS: List[Dict[str, Any]] = [
     {
         "id": "xiaoai_lan",
@@ -16,15 +16,6 @@ AI_MODEL_PRESETS: List[Dict[str, Any]] = [
         "api_key": "EMPTY",
         "is_vision": False,
         "description": "超级小爱对话引擎 (model 参数仅为名称, 不透传给小爱)"
-    },
-    {
-        "id": "qwen2_vl_local",
-        "name": "Qwen2-VL 本地多模态 (Ollama :11434)",
-        "api_base": "http://localhost:11434/v1",
-        "model": "qwen2-vl",
-        "api_key": "EMPTY",
-        "is_vision": True,
-        "description": "本地部署的多模态视觉大模型 (Qwen2-VL / LLaVA)"
     }
 ]
 
@@ -123,8 +114,8 @@ COMPLIANCE_CATEGORIES = [
 CONCURRENCY_CONFIG = {
     "default_browser_concurrency": 4,      # 最大并行渲染标签页/上下文数（防浏览器内存溢出）
     "default_llm_concurrency": 2,          # 最大并行大模型推理请求数（适配单卡/本地GPU算力）
-    "page_navigation_timeout_ms": 25000,   # 单页面导航超时毫秒数
-    "max_retries_per_url": 2,              # 针对偶发超时的重试次数
+    "page_navigation_timeout_ms": 12000,   # 单页面导航超时毫秒数 (12秒快速收敛)
+    "max_retries_per_url": 1,              # 针对偶发超时的重试次数 (不可达或封禁站点不反复死等)
     "queue_max_size": 500                  # 内存管道缓冲队列最大深度
 }
 

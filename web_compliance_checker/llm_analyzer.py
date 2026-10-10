@@ -1,6 +1,6 @@
 """
 Multimodal LLM Client & Content Safety Analyzer.
-Communicates with locally deployed vision-language models (e.g., Qwen2-VL, LLaVA, MiniCPM-V)
+Communicates with AI safety models (e.g. XiaoAi, LLaVA, MiniCPM-V)
 via OpenAI-compatible /v1/chat/completions or Ollama APIs.
 """
 
