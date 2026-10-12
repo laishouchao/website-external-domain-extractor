@@ -252,24 +252,31 @@ CRAWLER_SCOPE_MODE=root_domain
 ---
 
 #### 方案 B：Docker / Docker Compose 一键容器化部署
-项目根目录已内置生产级 `Dockerfile` 与 `docker-compose.yml`，包含 Web 服务及 PostgreSQL 数据库。
+项目根目录已内置生产级 `Dockerfile` 与 `docker-compose.yml`，已将 **Web 应用控制台**、**PostgreSQL 15 关系型数据库** 以及 **ClickHouse 24 OLAP 海量日志存证引擎** 全部完整做进容器编排，自带容器健康检查、持久化数据卷（`pgdata`, `chdata`）与自动迁移机制。
 
-1. **一键构建并启动容器集群**：
+1. **一键全量启动所有服务（Web + PostgreSQL + ClickHouse）**：
    ```bash
    docker compose up -d --build
    ```
+   *容器启动后会自动完成健康探针检查，后端服务启动时会自动检测并在 PG 和 ClickHouse 中创建所有必需的表结构与索引。直接访问 `http://localhost:8000` 即可使用。*
 
-2. **查看运行状态与实时日志**：
+2. **轻量运行模式（仅启动 Web + PostgreSQL，节省主机内存）**：
+   ```bash
+   docker compose up -d web postgres
+   ```
+   *如主机内存较小无需运行 ClickHouse，只需启动 PG 与 Web，系统将自动无缝降级走 PostgreSQL 单引擎运行。*
+
+3. **查看集群运行状态与实时日志**：
    ```bash
    docker compose ps
    docker compose logs -f web
    ```
 
-3. **停止与更新服务**：
+4. **停止与更新服务**：
    ```bash
-   # 停止服务
+   # 停止集群服务（数据保留在命名卷中）
    docker compose down
-   # 更新代码后重新构建
+   # 更新代码后重新构建部署
    docker compose up -d --build
    ```
 

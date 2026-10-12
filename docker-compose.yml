@@ -1,6 +1,14 @@
 # ==============================================================================
-# 网站外部域名提取与全深度网站地图系统 - Docker Compose 容器编排
-# 使用命令: docker compose up -d
+# 网站外部域名提取与全深度网站地图系统 - Docker Compose 完整容器集群编排
+#
+# 包含组件：
+#   1. web: 异步爬虫调度引擎 + FastAPI 后端 + Vue 3 SPA 前端控制台 (Port: 8000)
+#   2. postgres: PostgreSQL 15 关系型数据库 (任务调度、工单、威胁情报元数据) (Port: 5432)
+#   3. clickhouse: ClickHouse 24 OLAP 大数据引擎 (亿级页面存证与秒级关联去重) (Port: 8123, 9000)
+#
+# 启动方式：
+#   全量启动 (推荐): docker compose up -d --build
+#   轻量启动 (仅 PG): docker compose up -d web postgres
 # ==============================================================================
 version: '3.8'
 
@@ -15,72 +23,90 @@ services:
     container_name: domain_extractor_web
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:8000"
     environment:
+      # PostgreSQL 关系型数据库连接 (自动指向同网络下的 postgres 容器)
       - PG_HOST=postgres
       - PG_PORT=5432
-      - PG_USER=postgres
-      - PG_PASSWORD=postgres_secure_pwd
-      - PG_DATABASE=website_domain_db
-      - PG_POOL_SIZE=25
-      - CH_ENABLED=false
+      - PG_USER=${PG_USER:-postgres}
+      - PG_PASSWORD=${PG_PASSWORD:-postgres_secure_pwd}
+      - PG_DATABASE=${PG_DATABASE:-website_domain_db}
+      - PG_POOL_SIZE=${PG_POOL_SIZE:-25}
+
+      # ClickHouse OLAP 引擎连接 (自动指向同网络下的 clickhouse 容器)
+      - CH_ENABLED=${CH_ENABLED:-true}
       - CH_HOST=clickhouse
       - CH_PORT=8123
+      - CH_USER=${CH_USER:-default}
+      - CH_PASSWORD=${CH_PASSWORD:-}
+      - CH_DATABASE=${CH_DATABASE:-website_domain_db}
+
+      # Web 与认证安全配置
       - HOST=0.0.0.0
       - PORT=8000
-      - ADMIN_USERNAME=admin
-      - ADMIN_PASSWORD=admin123
+      - SECRET_KEY=${SECRET_KEY:-website-external-domain-extractor-jwt-secret-key-2026}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - ADMIN_NICKNAME=${ADMIN_NICKNAME:-系统管理员}
     volumes:
       - ./data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
+      clickhouse:
+        condition: service_healthy
 
   # ----------------------------------------------------------------------------
-  # 2. PostgreSQL 15 关系型数据库 (任务调度、整改工单、威胁情报元数据)
+  # 2. PostgreSQL 15 关系型数据库
   # ----------------------------------------------------------------------------
   postgres:
     image: postgres:15-alpine
     container_name: domain_extractor_postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "${PG_PORT:-5432}:5432"
     environment:
-      POSTGRES_DB: website_domain_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_secure_pwd
+      POSTGRES_DB: ${PG_DATABASE:-website_domain_db}
+      POSTGRES_USER: ${PG_USER:-postgres}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-postgres_secure_pwd}
       TZ: Asia/Shanghai
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d website_domain_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-postgres} -d ${PG_DATABASE:-website_domain_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # ----------------------------------------------------------------------------
-  # 3. ClickHouse OLAP 引擎 (可选：海量 3 亿+ 页面存证与日志快速检索)
-  # 若资源有限可保持禁用，如需启用请将上方 web 服务的 CH_ENABLED 设为 true
+  # 3. ClickHouse 24 OLAP 大数据与海量日志存证引擎
   # ----------------------------------------------------------------------------
-  # clickhouse:
-  #   image: clickhouse/clickhouse-server:24.3-alpine
-  #   container_name: domain_extractor_clickhouse
-  #   restart: unless-stopped
-  #   ports:
-  #     - "8123:8123"
-  #     - "9000:9000"
-  #   environment:
-  #     CLICKHOUSE_DB: website_domain_db
-  #     CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-  #   volumes:
-  #     - chdata:/var/lib/clickhouse
-  #   ulimits:
-  #     nofile:
-  #       soft: 262144
-  #       hard: 262144
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    container_name: domain_extractor_clickhouse
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: ${CH_DATABASE:-website_domain_db}
+      CLICKHOUSE_USER: ${CH_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CH_PASSWORD:-}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - chdata:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   pgdata:
     driver: local
-  # chdata:
-  #   driver: local
+  chdata:
+    driver: local
