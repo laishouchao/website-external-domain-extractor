@@ -107,7 +107,6 @@
               <th class="p-4 w-28">匹配方式</th>
               <th class="p-4 w-32">风险等级</th>
               <th class="p-4 w-32 text-center">关联涉及页面</th>
-              <th class="p-4">分类类别</th>
               <th class="p-4">安全标签</th>
               <th class="p-4">研判依据与说明</th>
               <th class="p-4 w-36">录入时间</th>
@@ -116,7 +115,7 @@
           </thead>
           <tbody class="divide-y divide-slate-800/60 font-normal">
             <tr v-if="store.loading" class="text-center py-8">
-              <td colspan="9" class="p-8 text-slate-500">
+              <td colspan="8" class="p-8 text-slate-500">
                 <div class="flex items-center justify-center gap-2">
                   <Loader2 class="w-5 h-5 animate-spin text-indigo-400" />
                   <span>加载威胁情报规则库...</span>
@@ -124,7 +123,7 @@
               </td>
             </tr>
             <tr v-else-if="store.profiles.length === 0" class="text-center py-8">
-              <td colspan="9" class="p-8 text-slate-500">
+              <td colspan="8" class="p-8 text-slate-500">
                 暂无威胁情报规则记录，可点击右上角添加或批量导入
               </td>
             </tr>
@@ -159,13 +158,10 @@
                 </span>
                 <span v-else class="text-slate-500 text-xs font-mono">0 页</span>
               </td>
-              <td class="p-4 text-slate-300">
-                {{ item.category || '-' }}
-              </td>
               <td class="p-4">
-                <div v-if="item.tags && item.tags.length" class="flex flex-wrap gap-1">
+                <div v-if="(item.tags && item.tags.length) || item.category" class="flex flex-wrap gap-1">
                   <span
-                    v-for="tag in item.tags"
+                    v-for="tag in (item.tags && item.tags.length ? item.tags : [item.category])"
                     :key="tag"
                     class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/60"
                   >

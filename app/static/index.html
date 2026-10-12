@@ -2345,7 +2345,7 @@
                                 <th class="py-2.5 px-4 whitespace-nowrap">匹配类型</th>
                                 <th class="py-2.5 px-4 whitespace-nowrap">风险评级</th>
                                 <th class="py-2.5 px-4 whitespace-nowrap text-center">关联涉及页面</th>
-                                <th class="py-2.5 px-4 whitespace-nowrap">威胁分类与标签</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">安全标签</th>
                                 <th class="py-2.5 px-4 max-w-xs">说明与备注</th>
                                 <th class="py-2.5 px-4 whitespace-nowrap">录入时间</th>
                                 <th class="py-2.5 px-4 text-right whitespace-nowrap">操作</th>
@@ -2379,14 +2379,12 @@
                                     <span v-else class="text-slate-500 font-mono text-xs">0 页</span>
                                 </td>
                                 <td class="py-2.5 px-4 whitespace-nowrap">
-                                    <div class="flex items-center gap-1.5 flex-wrap">
-                                        <span v-if="p.category" class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 text-[11px] font-medium border border-slate-700/60">
-                                            {{ p.category }}
-                                        </span>
-                                        <span v-for="t in p.tags" :key="t" class="px-1 py-0.2 rounded bg-rose-950/60 text-rose-300 text-[10px] font-mono border border-rose-800/40">
+                                    <div v-if="(p.tags && p.tags.length) || p.category" class="flex items-center gap-1.5 flex-wrap">
+                                        <span v-for="t in ((p.tags && p.tags.length) ? p.tags : [p.category])" :key="t" class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[11px] font-mono border border-slate-700/60">
                                             #{{ t }}
                                         </span>
                                     </div>
+                                    <span v-else class="text-slate-500 text-xs">-</span>
                                 </td>
                                 <td class="py-2.5 px-4 max-w-xs truncate text-slate-400 text-[11px]" :title="p.remark">
                                     {{ p.remark || '（无备注）' }}
