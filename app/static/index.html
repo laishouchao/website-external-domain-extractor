@@ -2344,6 +2344,7 @@
                                 <th class="py-2.5 px-4">域名 / 通配规则</th>
                                 <th class="py-2.5 px-4 whitespace-nowrap">匹配类型</th>
                                 <th class="py-2.5 px-4 whitespace-nowrap">风险评级</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap text-center">关联涉及页面</th>
                                 <th class="py-2.5 px-4 whitespace-nowrap">威胁分类与标签</th>
                                 <th class="py-2.5 px-4 max-w-xs">说明与备注</th>
                                 <th class="py-2.5 px-4 whitespace-nowrap">录入时间</th>
@@ -2370,6 +2371,12 @@
                                     <span v-else-if="p.risk_level === 'medium'" class="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/80 font-semibold text-xs">🟡 中危</span>
                                     <span v-else-if="p.risk_level === 'low'" class="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/80 text-xs">🔵 低危</span>
                                     <span v-else class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/80 text-xs">🟢 安全白名单</span>
+                                </td>
+                                <td class="py-2.5 px-4 whitespace-nowrap text-center">
+                                    <span v-if="p.associated_pages_count || p.page_count" class="px-2 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800/40 font-mono text-[11px] font-semibold" :title="`该情报规则共关联涉及全库 ${Number(p.associated_pages_count || p.page_count).toLocaleString()} 个历史扫描页面`">
+                                        📄 {{ Number(p.associated_pages_count || p.page_count).toLocaleString() }} 页
+                                    </span>
+                                    <span v-else class="text-slate-500 font-mono text-xs">0 页</span>
                                 </td>
                                 <td class="py-2.5 px-4 whitespace-nowrap">
                                     <div class="flex items-center gap-1.5 flex-wrap">

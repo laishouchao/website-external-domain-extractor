@@ -2153,6 +2153,105 @@ def get_risk_profile_by_domain(domain: str) -> Optional[dict]:
         return res
 
 
+def enrich_risk_profiles_page_counts(profiles: List[dict]) -> List[dict]:
+    """
+    Enrich threat intelligence profiles with the count of associated affected pages.
+    Uses ClickHouse pre-aggregated tables as primary source, with PostgreSQL fallback.
+    """
+    if not profiles:
+        return profiles
+
+    ch = get_ch_manager()
+    ch_counts: Dict[str, int] = {}
+    if ch.is_available():
+        try:
+            ch_counts = ch.get_profiles_associated_page_counts(profiles)
+        except Exception as e:
+            logger.warning(f"Error getting page counts from ClickHouse: {e}")
+
+    # Check which profiles still need counts (or ClickHouse unavailable)
+    unresolved_profiles = []
+    for p in profiles:
+        clean = (p.get("domain") or "").lower().strip().lstrip("*.")
+        if clean in ch_counts:
+            p["associated_pages_count"] = ch_counts[clean]
+            p["page_count"] = ch_counts[clean]
+        else:
+            unresolved_profiles.append(p)
+
+    # Fallback to PostgreSQL for unresolved profiles
+    if unresolved_profiles:
+        try:
+            with db_session() as conn:
+                cursor = conn.cursor()
+
+                # 1. Check risk_page_remediations for remediation pages
+                root_targets = [p["domain"].lower().strip().lstrip("*.") for p in unresolved_profiles if p.get("match_type") == "root"]
+                exact_targets = [p["domain"].lower().strip().lstrip("*.") for p in unresolved_profiles if p.get("match_type") == "exact"]
+
+                pg_counts: Dict[str, int] = {}
+                if root_targets:
+                    placeholders = ", ".join(["?"] * len(root_targets))
+                    cursor.execute(f"""
+                        SELECT root_domain, COUNT(DISTINCT page_url) as page_cnt
+                        FROM risk_page_remediations
+                        WHERE root_domain IN ({placeholders})
+                        GROUP BY root_domain
+                    """, root_targets)
+                    for r in cursor.fetchall():
+                        pg_counts[r["root_domain"]] = int(r["page_cnt"])
+
+                if exact_targets:
+                    placeholders = ", ".join(["?"] * len(exact_targets))
+                    cursor.execute(f"""
+                        SELECT domain, COUNT(DISTINCT page_url) as page_cnt
+                        FROM risk_page_remediations
+                        WHERE domain IN ({placeholders})
+                        GROUP BY domain
+                    """, exact_targets)
+                    for r in cursor.fetchall():
+                        pg_counts[r["domain"]] = int(r["page_cnt"])
+
+                # 2. For any remaining zero, fallback to external_domains total occurrences
+                missing = [p for p in unresolved_profiles if p["domain"].lower().strip().lstrip("*.") not in pg_counts]
+                if missing:
+                    m_roots = [p["domain"].lower().strip().lstrip("*.") for p in missing if p.get("match_type") == "root"]
+                    m_exacts = [p["domain"].lower().strip().lstrip("*.") for p in missing if p.get("match_type") == "exact"]
+                    if m_roots:
+                        placeholders = ", ".join(["?"] * len(m_roots))
+                        cursor.execute(f"""
+                            SELECT root_domain, SUM(occurrence_count) as total_occ
+                            FROM external_domains
+                            WHERE root_domain IN ({placeholders})
+                            GROUP BY root_domain
+                        """, m_roots)
+                        for r in cursor.fetchall():
+                            pg_counts[r["root_domain"]] = int(r["total_occ"])
+                    if m_exacts:
+                        placeholders = ", ".join(["?"] * len(m_exacts))
+                        cursor.execute(f"""
+                            SELECT domain, SUM(occurrence_count) as total_occ
+                            FROM external_domains
+                            WHERE domain IN ({placeholders})
+                            GROUP BY domain
+                        """, m_exacts)
+                        for r in cursor.fetchall():
+                            pg_counts[r["domain"]] = int(r["total_occ"])
+
+                for p in unresolved_profiles:
+                    clean = (p.get("domain") or "").lower().strip().lstrip("*.")
+                    cnt = pg_counts.get(clean, 0)
+                    p["associated_pages_count"] = cnt
+                    p["page_count"] = cnt
+        except Exception as e:
+            logger.warning(f"Error enriching page counts from PostgreSQL: {e}")
+            for p in unresolved_profiles:
+                p.setdefault("associated_pages_count", 0)
+                p.setdefault("page_count", 0)
+
+    return profiles
+
+
 def list_risk_profiles(
     search: Optional[str] = None,
     risk_level: Optional[str] = None,
@@ -2193,6 +2292,7 @@ def list_risk_profiles(
                 item["tags"] = []
             rows.append(item)
 
+        enrich_risk_profiles_page_counts(rows)
         return rows, total
 
 

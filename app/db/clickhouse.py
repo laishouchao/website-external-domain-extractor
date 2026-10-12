@@ -141,6 +141,25 @@ class ClickHouseManager:
                 SETTINGS index_granularity = 8192;
             """)
 
+            # 5. Table: root_domain_page_counts (Pre-aggregated distinct page counts per root domain)
+            client.command(f"""
+                CREATE TABLE IF NOT EXISTS {self.database}.root_domain_page_counts (
+                    root_domain LowCardinality(String),
+                    page_count UInt64
+                ) ENGINE = ReplacingMergeTree()
+                ORDER BY (root_domain);
+            """)
+
+            # 6. Table: domain_page_counts (Pre-aggregated distinct page counts per domain)
+            client.command(f"""
+                CREATE TABLE IF NOT EXISTS {self.database}.domain_page_counts (
+                    domain String,
+                    root_domain LowCardinality(String),
+                    page_count UInt64
+                ) ENGINE = ReplacingMergeTree()
+                ORDER BY (domain, root_domain);
+            """)
+
             logger.info("[ClickHouse] Database and MergeTree tables initialized successfully.")
             return True
         except Exception as e:
@@ -580,6 +599,96 @@ class ClickHouseManager:
             return True
         except Exception as e:
             logger.error(f"[ClickHouse] Purge task data failed for {task_id}: {e}")
+            return False
+
+    def get_profiles_associated_page_counts(self, profiles: List[dict]) -> Dict[str, int]:
+        """
+        Query associated distinct page counts for intelligence profiles from ClickHouse.
+        Returns a dict mapping clean_domain -> page_count.
+        """
+        if not self.is_available() or not profiles:
+            return {}
+
+        client = self.get_client()
+        if not client:
+            return {}
+
+        counts_map: Dict[str, int] = {}
+        root_targets = []
+        exact_targets = []
+
+        for p in profiles:
+            clean = (p.get("domain") or "").lower().strip().lstrip("*.")
+            if not clean:
+                continue
+            if p.get("match_type") == "exact":
+                exact_targets.append(clean)
+            else:
+                root_targets.append(clean)
+
+        try:
+            # 1. Query root targets
+            if root_targets:
+                r_in = ", ".join([f"'{d.replace(chr(39), chr(39)+chr(39))}'" for d in set(root_targets)])
+                res = client.query(f"""
+                    SELECT root_domain, page_count 
+                    FROM {self.database}.root_domain_page_counts 
+                    WHERE root_domain IN ({r_in})
+                """)
+                for r in res.result_rows:
+                    counts_map[r[0]] = int(r[1])
+
+                # Check for sub-roots or missing domains in domain_page_counts
+                missing = [d for d in root_targets if d not in counts_map]
+                if missing:
+                    m_in = ", ".join([f"'{d.replace(chr(39), chr(39)+chr(39))}'" for d in set(missing)])
+                    res2 = client.query(f"""
+                        SELECT domain, page_count 
+                        FROM {self.database}.domain_page_counts 
+                        WHERE domain IN ({m_in})
+                    """)
+                    for r in res2.result_rows:
+                        counts_map[r[0]] = int(r[1])
+
+            # 2. Query exact targets
+            if exact_targets:
+                e_in = ", ".join([f"'{d.replace(chr(39), chr(39)+chr(39))}'" for d in set(exact_targets)])
+                res3 = client.query(f"""
+                    SELECT domain, page_count 
+                    FROM {self.database}.domain_page_counts 
+                    WHERE domain IN ({e_in})
+                """)
+                for r in res3.result_rows:
+                    counts_map[r[0]] = int(r[1])
+
+        except Exception as e:
+            logger.warning(f"[ClickHouse] get_profiles_associated_page_counts query failed: {e}")
+
+        return counts_map
+
+    def refresh_domain_page_counts(self) -> bool:
+        """Populate or update domain_page_counts and root_domain_page_counts tables."""
+        if not self.is_available():
+            return False
+        client = self.get_client()
+        if not client:
+            return False
+        try:
+            client.command(f"""
+                INSERT INTO {self.database}.root_domain_page_counts
+                SELECT root_domain, uniqExact(page_url) as page_count
+                FROM {self.database}.domain_occurrences
+                GROUP BY root_domain
+            """)
+            client.command(f"""
+                INSERT INTO {self.database}.domain_page_counts
+                SELECT domain, root_domain, uniq(page_url) as page_count
+                FROM {self.database}.domain_occurrences
+                GROUP BY domain, root_domain
+            """)
+            return True
+        except Exception as e:
+            logger.warning(f"[ClickHouse] refresh_domain_page_counts failed: {e}")
             return False
 
 

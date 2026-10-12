@@ -106,6 +106,7 @@
               <th class="p-4">目标规则匹配模式</th>
               <th class="p-4 w-28">匹配方式</th>
               <th class="p-4 w-32">风险等级</th>
+              <th class="p-4 w-32 text-center">关联涉及页面</th>
               <th class="p-4">分类类别</th>
               <th class="p-4">安全标签</th>
               <th class="p-4">研判依据与说明</th>
@@ -115,7 +116,7 @@
           </thead>
           <tbody class="divide-y divide-slate-800/60 font-normal">
             <tr v-if="store.loading" class="text-center py-8">
-              <td colspan="8" class="p-8 text-slate-500">
+              <td colspan="9" class="p-8 text-slate-500">
                 <div class="flex items-center justify-center gap-2">
                   <Loader2 class="w-5 h-5 animate-spin text-indigo-400" />
                   <span>加载威胁情报规则库...</span>
@@ -123,7 +124,7 @@
               </td>
             </tr>
             <tr v-else-if="store.profiles.length === 0" class="text-center py-8">
-              <td colspan="8" class="p-8 text-slate-500">
+              <td colspan="9" class="p-8 text-slate-500">
                 暂无威胁情报规则记录，可点击右上角添加或批量导入
               </td>
             </tr>
@@ -146,6 +147,17 @@
               </td>
               <td class="p-4">
                 <RiskBadge :level="item.risk_level" />
+              </td>
+              <td class="p-4 text-center">
+                <span
+                  v-if="item.associated_pages_count || item.page_count"
+                  class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20"
+                  :title="`该情报规则共关联涉及全库 ${Number(item.associated_pages_count || item.page_count).toLocaleString()} 个历史扫描页面`"
+                >
+                  <FileText class="w-3 h-3 text-indigo-400" />
+                  {{ Number(item.associated_pages_count || item.page_count).toLocaleString() }} 页
+                </span>
+                <span v-else class="text-slate-500 text-xs font-mono">0 页</span>
               </td>
               <td class="p-4 text-slate-300">
                 {{ item.category || '-' }}
@@ -265,7 +277,7 @@ gov-phish.xyz,critical,仿冒钓鱼,仿冒/欺诈,仿冒政府网站"
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { ShieldAlert, Plus, Upload, RefreshCw, Download, Search, Globe, Trash2, Edit3, Loader2 } from 'lucide-vue-next'
+import { ShieldAlert, Plus, Upload, RefreshCw, Download, Search, Globe, Trash2, Edit3, Loader2, FileText } from 'lucide-vue-next'
 import { useThreatIntelStore } from '@/stores/threatIntel'
 import RiskBadge from '@/components/common/RiskBadge.vue'
 import Pagination from '@/components/common/Pagination.vue'
