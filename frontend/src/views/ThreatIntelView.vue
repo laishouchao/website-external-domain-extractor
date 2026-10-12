@@ -103,14 +103,14 @@
         <table class="w-full text-left text-sm text-slate-300">
           <thead class="bg-slate-950/80 text-xs font-semibold uppercase text-slate-400 border-b border-slate-800">
             <tr>
-              <th class="p-4">目标规则匹配模式</th>
-              <th class="p-4 w-28">匹配方式</th>
-              <th class="p-4 w-32">风险等级</th>
-              <th class="p-4 w-32 text-center">关联涉及页面</th>
-              <th class="p-4">安全标签</th>
+              <th class="p-4 w-52 max-w-[220px]">目标规则匹配模式</th>
+              <th class="p-4 w-36 whitespace-nowrap">匹配方式</th>
+              <th class="p-4 w-32 whitespace-nowrap">风险等级</th>
+              <th class="p-4 w-44 text-center whitespace-nowrap">关联涉及页面</th>
+              <th class="p-4 w-44">安全标签</th>
               <th class="p-4">研判依据与说明</th>
-              <th class="p-4 w-36">录入时间</th>
-              <th class="p-4 w-20 text-right">操作</th>
+              <th class="p-4 w-36 whitespace-nowrap">录入时间</th>
+              <th class="p-4 w-20 text-right whitespace-nowrap">操作</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-800/60 font-normal">
@@ -132,28 +132,30 @@
               :key="item.id"
               class="hover:bg-slate-800/40 transition-colors"
             >
-              <td class="p-4 font-mono font-medium text-slate-100 flex items-center gap-2">
-                <Globe class="w-4 h-4 text-slate-400 flex-shrink-0" />
-                <span class="select-all">{{ item.domain }}</span>
+              <td class="p-4 w-52 max-w-[220px]">
+                <div class="font-mono font-medium text-slate-100 flex items-center gap-2 truncate" :title="item.domain">
+                  <Globe class="w-4 h-4 text-slate-400 flex-shrink-0" />
+                  <span class="select-all truncate">{{ item.domain }}</span>
+                </div>
               </td>
-              <td class="p-4">
+              <td class="p-4 whitespace-nowrap">
                 <span
-                  class="px-2 py-0.5 rounded text-xs font-mono font-medium"
+                  class="px-2.5 py-1 rounded text-xs font-mono font-medium inline-block"
                   :class="item.match_type === 'root' ? 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20' : 'bg-slate-800 text-slate-300 border border-slate-700'"
                 >
                   {{ item.match_type === 'root' ? '根域通配 (*.)' : '精确子域' }}
                 </span>
               </td>
-              <td class="p-4">
+              <td class="p-4 whitespace-nowrap">
                 <RiskBadge :level="item.risk_level" />
               </td>
-              <td class="p-4 text-center">
+              <td class="p-4 text-center whitespace-nowrap">
                 <span
                   v-if="item.associated_pages_count || item.page_count"
-                  class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20"
+                  class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 shadow-sm"
                   :title="`该情报规则共关联涉及全库 ${Number(item.associated_pages_count || item.page_count).toLocaleString()} 个历史扫描页面`"
                 >
-                  <FileText class="w-3 h-3 text-indigo-400" />
+                  <FileText class="w-3.5 h-3.5 text-indigo-400" />
                   {{ Number(item.associated_pages_count || item.page_count).toLocaleString() }} 页
                 </span>
                 <span v-else class="text-slate-500 text-xs font-mono">0 页</span>
@@ -173,7 +175,7 @@
               <td class="p-4 text-xs text-slate-400 max-w-xs truncate">
                 {{ item.remark || '-' }}
               </td>
-              <td class="p-4 text-xs font-mono text-slate-500">
+              <td class="p-4 text-xs font-mono text-slate-500 whitespace-nowrap">
                 {{ item.created_at ? item.created_at.split(' ')[0] : '-' }}
               </td>
               <td class="p-4 text-right">
